@@ -94,6 +94,45 @@ cd backend
 HONEY_CHAIN_DATABASE_URL='postgresql+psycopg://honey_chain_app@127.0.0.1:5432/honey_chain' .venv/bin/alembic check
 ```
 
+## Authentication
+
+Authentication uses Argon2id password hashing and signed JWT access tokens.
+Set these local-only values in `backend/.env` before using login or the seed
+command:
+
+```text
+HONEY_CHAIN_JWT_SECRET=replace-with-a-high-entropy-local-secret
+HONEY_CHAIN_JWT_ALGORITHM=HS256
+HONEY_CHAIN_ACCESS_TOKEN_EXPIRE_MINUTES=30
+HONEY_CHAIN_DEMO_PASSWORD=replace-with-a-local-demo-password
+```
+
+The access-token expiration defaults to 30 minutes and is configured by
+`HONEY_CHAIN_ACCESS_TOKEN_EXPIRE_MINUTES`. Do not commit real secret values.
+
+Create the three local demo users explicitly; FastAPI does not seed them on
+startup:
+
+```bash
+cd backend
+.venv/bin/python -m app.auth.seed
+```
+
+The command creates missing `ADMIN`, `BEEKEEPER`, and `PROCESSOR` demo users
+only. It does not overwrite existing accounts or print their passwords. These
+accounts are for local MVP/demo use only, never production.
+
+Obtain an access token using form data. OAuth2 uses the `username` field for
+the email address:
+
+```bash
+curl -X POST http://127.0.0.1:8000/auth/login \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'username=demo.admin@honeychain.local&password=YOUR_LOCAL_DEMO_PASSWORD'
+```
+
+Successful responses contain only `access_token` and `token_type`.
+
 ## Run the API
 
 ```bash

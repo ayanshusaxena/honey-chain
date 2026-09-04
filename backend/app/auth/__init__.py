@@ -1,1 +1,1 @@
-"""Authentication domain; implementation will be added in a later chunk."""
+"""Authentication domain for password, token, and authorization handling."""
