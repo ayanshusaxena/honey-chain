@@ -153,3 +153,52 @@ Expected response:
 ```json
 {"status":"ok","service":"Honey Chain API"}
 ```
+
+## Hive Management
+
+Hive management endpoints provide CRUD and operational status tracking for apiaries under `/hives`.
+
+### Endpoints & Role Authorization
+
+| Method | Endpoint | Allowed Roles | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/hives` | `ADMIN`, `BEEKEEPER` | Create hive. `BEEKEEPER` creates own hive; `ADMIN` must assign an active beekeeper via `beekeeper_id`. |
+| `GET` | `/hives` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | List hives. `BEEKEEPER` sees own hives; `ADMIN` and `PROCESSOR` see all. |
+| `GET` | `/hives/{hive_id}` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | View hive details. `BEEKEEPER` can only access own hives. |
+| `PATCH` | `/hives/{hive_id}` | `ADMIN`, `BEEKEEPER` | Update region, operational status, or active flag. `BEEKEEPER` manages own hives. |
+
+*Note: `PROCESSOR` has read-only visibility for operational traceability and cannot create, modify, or deactivate hives.*
+
+### HTTP Status Codes
+
+- `200 OK`: Successful retrieval or update.
+- `201 Created`: Successful hive registration.
+- `401 Unauthorized`: Missing or invalid bearer token.
+- `403 Forbidden`: Authenticated user lacks permission or does not own the hive.
+- `404 Not Found`: Target hive or assigned beekeeper does not exist.
+- `409 Conflict`: `hive_code` already exists.
+- `422 Unprocessable Entity`: Invalid request payload or blank required fields.
+
+### Example: Create a Hive
+
+```bash
+curl -X POST http://127.0.0.1:8000/hives \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "hive_code": "HIVE-KSH-001",
+    "location_region": "Kashmir Valley"
+  }'
+```
+
+### Example: Update / Deactivate a Hive
+
+```bash
+curl -X PATCH http://127.0.0.1:8000/hives/YOUR_HIVE_UUID \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "MAINTENANCE",
+    "is_active": false
+  }'
+```
