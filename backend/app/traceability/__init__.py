@@ -1,1 +1,5 @@
-"""Traceability domain; implementation will be added in a later chunk."""
+"""Traceability domain module."""
+
+from app.traceability.router import router
+
+__all__ = ["router"]

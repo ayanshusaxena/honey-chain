@@ -298,3 +298,42 @@ curl -X POST http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/risk/evaluate \
 curl http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/risk \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
+
+## Traceability Management (Harvest → Collection Lot → Batch)
+
+Traceability endpoints manage the physical operational custody chain: `Hive` $\rightarrow$ `Harvest` $\rightarrow$ `Collection Lot` $\rightarrow$ `Processing Batch`.
+
+### Invariants & Business Rules
+
+- **Ownership Isolation**: A harvest belongs to a single beekeeper domain. Contributing hives must belong to that same beekeeper. Cross-beekeeper hive composition is strictly prohibited.
+- **Incremental & Exact Allocation**:
+  - `HiveHarvest.quantity_used_kg`: partial allocation allowed; sum cannot exceed `Harvest.quantity_kg`. At harvest finalization, sum must exactly equal `Harvest.quantity_kg`.
+  - `CollectionLotHarvest.quantity_used_kg`: partial allocation allowed; source harvests cannot be oversubscribed across collection lots. At lot finalization, sum must exactly equal `CollectionLot.quantity_kg`.
+  - `BatchCollectionLot.quantity_used_kg`: partial allocation allowed; source collection lots cannot be oversubscribed across batches.
+- **Derived Batch Quantity**: `Batch` has no independent declared quantity column; batch quantity is dynamically derived from `SUM(BatchCollectionLot.quantity_used_kg)`. Finalization requires at least one allocation.
+- **Concurrency Safety**: Row locking (`SELECT ... FOR UPDATE`) prevents oversubscription and race conditions during allocation.
+- **Status State Machine**:
+  - `ACTIVE` $\leftrightarrow$ `HOLD`
+  - `ACTIVE` $\rightarrow$ `RECALL` (terminal)
+  - Transitions to `HOLD` or `RECALL` require a finalized batch and may only be triggered by `ADMIN`.
+
+### Endpoints & Role Authorization
+
+| Method | Endpoint | Allowed Roles | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/harvests` | `ADMIN`, `BEEKEEPER` | Create harvest record. |
+| `GET` | `/harvests` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | List harvests (filtered to owned harvests for `BEEKEEPER`). |
+| `GET` | `/harvests/{id}` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | View harvest details and contributing hives. |
+| `POST` | `/harvests/{id}/hives` | `ADMIN`, `BEEKEEPER` | Allocate hive yield to harvest. |
+| `POST` | `/harvests/{id}/finalize` | `ADMIN`, `BEEKEEPER` | Finalize harvest (enforces exact balance; locks records). |
+| `POST` | `/collection-lots` | `ADMIN`, `PROCESSOR` | Create collection lot. |
+| `GET` | `/collection-lots` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | List collection lots (lineage-filtered for `BEEKEEPER`). |
+| `GET` | `/collection-lots/{id}` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | View collection lot details and contributing harvests. |
+| `POST` | `/collection-lots/{id}/harvests` | `ADMIN`, `PROCESSOR` | Allocate harvest to collection lot. |
+| `POST` | `/collection-lots/{id}/finalize` | `ADMIN`, `PROCESSOR` | Finalize collection lot (enforces exact balance). |
+| `POST` | `/batches` | `ADMIN`, `PROCESSOR` | Create processing batch. |
+| `GET` | `/batches` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | List processing batches (lineage-filtered for `BEEKEEPER`). |
+| `GET` | `/batches/{id}` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | View batch details with upstream lineage traversal. |
+| `POST` | `/batches/{id}/collection-lots` | `ADMIN`, `PROCESSOR` | Allocate collection lot to batch. |
+| `POST` | `/batches/{id}/finalize` | `ADMIN`, `PROCESSOR` | Finalize batch (requires $\ge 1$ allocation). |
+| `PATCH` | `/batches/{id}/status` | `ADMIN` | Transition batch status (`ACTIVE`, `HOLD`, `RECALL`). |
