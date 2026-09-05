@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import BIGINT, CHAR, CheckConstraint, DateTime, Enum as SAEnum, ForeignKey, Integer, Numeric, String, Text, func
@@ -88,6 +89,13 @@ class PackagingLot(Base):
             "package_size_grams > 0", name="ck_packaging_lots_package_size_grams_positive"
         ),
     )
+
+    @property
+    def packaged_quantity_kg(self) -> float:
+        """Derived packaging quantity in kilograms using Decimal arithmetic."""
+        size_dec = Decimal(str(self.package_size_grams))
+        qty_dec = Decimal(self.quantity)
+        return float((qty_dec * size_dec) / Decimal("1000"))
 
 
 class QrToken(Base):
