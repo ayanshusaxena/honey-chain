@@ -7,9 +7,14 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from unittest.mock import MagicMock
+
+from hexbytes import HexBytes
+from pydantic import SecretStr
 import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from web3.exceptions import ContractLogicError, TimeExhausted
 
 from app.auth.security import hash_password
 from app.blockchain import (
@@ -20,6 +25,7 @@ from app.blockchain import (
     BlockchainNotConfiguredError,
     BlockchainService,
     BlockchainSettings,
+    BlockchainTransactionError,
     EthereumJsonRpcAdapter,
     HONEY_TRACEABILITY_ABI,
     MockBlockchainClient,
@@ -457,3 +463,204 @@ def test_ethereum_json_rpc_adapter_defaults_to_compiled_abi() -> None:
     adapter = EthereumJsonRpcAdapter(settings=settings)
     assert adapter.contract_abi == HONEY_TRACEABILITY_ABI
     assert adapter.is_configured() is True
+
+
+def test_ethereum_json_rpc_adapter_configuration_and_unconfigured_rejections() -> None:
+    """Verify EthereumJsonRpcAdapter fails closed with BlockchainNotConfiguredError when incomplete."""
+    # Disabled
+    disabled_settings = BlockchainSettings(enabled=False)
+    adapter = EthereumJsonRpcAdapter(settings=disabled_settings)
+    assert adapter.is_configured() is False
+    with pytest.raises(BlockchainNotConfiguredError, match="not configured or disabled"):
+        adapter.register_batch("BATCH-001")
+
+    # Missing private key
+    missing_key_settings = BlockchainSettings(
+        enabled=True,
+        rpc_url="http://localhost:8545",
+        contract_address="0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        private_key=None,
+    )
+    adapter2 = EthereumJsonRpcAdapter(settings=missing_key_settings)
+    assert adapter2.is_configured() is True
+    with pytest.raises(BlockchainNotConfiguredError, match="private key is not configured"):
+        adapter2.register_batch("BATCH-001")
+
+
+def test_ethereum_json_rpc_adapter_contract_address_and_key_validation() -> None:
+    """Verify invalid contract address and malformed private keys raise BlockchainClientError."""
+    # Invalid contract address
+    bad_address_settings = BlockchainSettings(
+        enabled=True,
+        rpc_url="http://localhost:8545",
+        contract_address="not-an-ethereum-address",
+        private_key=SecretStr("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+    )
+    adapter = EthereumJsonRpcAdapter(settings=bad_address_settings)
+    with pytest.raises(BlockchainClientError, match="Invalid contract address"):
+        adapter.register_batch("BATCH-001")
+
+    # Malformed private key
+    bad_key_settings = BlockchainSettings(
+        enabled=True,
+        rpc_url="http://localhost:8545",
+        contract_address="0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        private_key=SecretStr("0xinvalidhexkey"),
+    )
+    adapter2 = EthereumJsonRpcAdapter(settings=bad_key_settings)
+    with pytest.raises(BlockchainClientError, match="Invalid private key"):
+        adapter2.register_batch("BATCH-001")
+
+
+def test_ethereum_json_rpc_adapter_rpc_connectivity_and_chain_id_validation() -> None:
+    """Verify RPC connection failure and chain ID mismatch raise BlockchainClientError."""
+    settings = BlockchainSettings(
+        enabled=True,
+        rpc_url="http://localhost:8545",
+        contract_address="0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        chain_id=11155111,  # Configured for Sepolia
+        private_key=SecretStr("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+    )
+
+    # 1. Unreachable RPC
+    mock_unconnected_w3 = MagicMock()
+    mock_unconnected_w3.is_connected.return_value = False
+    adapter1 = EthereumJsonRpcAdapter(settings=settings, w3=mock_unconnected_w3)
+    with pytest.raises(BlockchainClientError, match="Cannot connect to blockchain RPC node"):
+        adapter1.register_batch("BATCH-001")
+
+    # 2. Chain ID mismatch (node returns 31337 but config expects 11155111)
+    mock_connected_w3 = MagicMock()
+    mock_connected_w3.is_connected.return_value = True
+    mock_connected_w3.eth.chain_id = 31337
+    adapter2 = EthereumJsonRpcAdapter(settings=settings, w3=mock_connected_w3)
+    with pytest.raises(BlockchainClientError, match="Configured chain ID \\(11155111\\) does not match"):
+        adapter2.register_batch("BATCH-001")
+
+
+def test_ethereum_json_rpc_adapter_input_validation() -> None:
+    """Verify adapter validates batch_code and exact 32-byte hash lengths."""
+    settings = BlockchainSettings(
+        enabled=True,
+        rpc_url="http://localhost:8545",
+        contract_address="0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        private_key=SecretStr("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+    )
+    adapter = EthereumJsonRpcAdapter(settings=settings)
+
+    # Empty batch code
+    with pytest.raises(ValueError, match="batch_code must be a non-empty string"):
+        adapter.register_batch("")
+
+    # Invalid metadata_hash length
+    with pytest.raises(ValueError, match="metadata_hash must be exactly 32 bytes"):
+        adapter.register_batch("BATCH-001", metadata_hash=b"short")
+
+    # Invalid evidence_hash length
+    with pytest.raises(ValueError, match="evidence_hash must be exactly 32 bytes"):
+        adapter.add_evidence("BATCH-001", evidence_hash=b"short")
+
+
+def test_ethereum_json_rpc_adapter_successful_transaction_execution_and_receipt_mapping() -> None:
+    """Verify adapter signs tx, broadcasts raw bytes, waits for receipt, and returns CONFIRMED."""
+    settings = BlockchainSettings(
+        enabled=True,
+        rpc_url="http://localhost:8545",
+        contract_address="0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        chain_id=31337,
+        network_name="hardhat-simulated",
+        private_key=SecretStr("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+    )
+
+    mock_w3 = MagicMock()
+    mock_w3.is_connected.return_value = True
+    mock_w3.eth.chain_id = 31337
+    mock_w3.eth.get_transaction_count.return_value = 0
+
+    expected_tx_hash_hex = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    mock_w3.eth.send_raw_transaction.return_value = HexBytes(expected_tx_hash_hex)
+    mock_w3.eth.wait_for_transaction_receipt.return_value = {
+        "status": 1,
+        "blockNumber": 128,
+        "transactionHash": HexBytes(expected_tx_hash_hex),
+    }
+
+    mock_func_call = MagicMock()
+    mock_func_call.build_transaction.return_value = {
+        "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "nonce": 0,
+        "chainId": 31337,
+        "to": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    }
+
+    mock_contract = MagicMock()
+    mock_contract.functions.registerBatch.return_value = mock_func_call
+    mock_contract.functions.addEvidence.return_value = mock_func_call
+    mock_w3.eth.contract.return_value = mock_contract
+
+    adapter = EthereumJsonRpcAdapter(settings=settings, w3=mock_w3)
+
+    # 1. Test register_batch
+    reg_result = adapter.register_batch("BATCH-001", EMPTY_METADATA_HASH)
+    assert reg_result.transaction_hash == expected_tx_hash_hex
+    assert reg_result.block_number == 128
+    assert reg_result.network == "hardhat-simulated"
+    assert reg_result.contract_address == "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+    assert reg_result.status == BlockchainStatus.CONFIRMED
+    mock_contract.functions.registerBatch.assert_called_once_with("BATCH-001", EMPTY_METADATA_HASH)
+
+    # 2. Test add_evidence
+    evidence_digest = bytes.fromhex("e" * 64)
+    evi_result = adapter.add_evidence("BATCH-001", evidence_digest)
+    assert evi_result.transaction_hash == expected_tx_hash_hex
+    assert evi_result.block_number == 128
+    assert evi_result.status == BlockchainStatus.CONFIRMED
+    mock_contract.functions.addEvidence.assert_called_once_with("BATCH-001", evidence_digest)
+
+
+def test_ethereum_json_rpc_adapter_revert_and_timeout_error_handling() -> None:
+    """Verify on-chain revert status=0, build errors, and receipt timeouts map to domain exceptions."""
+    settings = BlockchainSettings(
+        enabled=True,
+        rpc_url="http://localhost:8545",
+        contract_address="0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        chain_id=31337,
+        private_key=SecretStr("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
+    )
+
+    mock_w3 = MagicMock()
+    mock_w3.is_connected.return_value = True
+    mock_w3.eth.chain_id = 31337
+    mock_w3.eth.get_transaction_count.return_value = 0
+
+    mock_func_call = MagicMock()
+    mock_func_call.build_transaction.return_value = {
+        "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "to": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "value": 0,
+        "nonce": 0,
+        "chainId": 31337,
+        "data": b"",
+    }
+
+    mock_contract = MagicMock()
+    mock_contract.functions.registerBatch.return_value = mock_func_call
+    mock_w3.eth.contract.return_value = mock_contract
+
+    # 1. On-chain transaction reverted (receipt status = 0)
+    mock_w3.eth.send_raw_transaction.return_value = HexBytes("0x1111")
+    mock_w3.eth.wait_for_transaction_receipt.return_value = {"status": 0, "blockNumber": 130}
+
+    adapter = EthereumJsonRpcAdapter(settings=settings, w3=mock_w3)
+    with pytest.raises(BlockchainTransactionError, match="Transaction reverted on-chain with status 0"):
+        adapter.register_batch("BATCH-001")
+
+    # 2. Receipt timeout (TimeExhausted)
+    mock_w3.eth.wait_for_transaction_receipt.side_effect = TimeExhausted("Polling exceeded timeout")
+    with pytest.raises(BlockchainClientError, match="Transaction receipt timeout"):
+        adapter.register_batch("BATCH-001")
+
+    # 3. Contract logic error during gas estimation / simulation
+    mock_func_call.build_transaction.side_effect = ContractLogicError("execution reverted: Batch already exists")
+    with pytest.raises(BlockchainTransactionError, match="Contract execution simulated revert"):
+        adapter.register_batch("BATCH-001")
