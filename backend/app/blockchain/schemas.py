@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import re
 from uuid import UUID
 
@@ -93,3 +94,20 @@ class AddEvidencePayload(BaseModel):
 
 # Backward compatibility alias
 EvidenceRecordPayload = AddEvidencePayload
+
+
+class BlockchainRecordResponse(BaseModel):
+    """Pydantic response schema for a persisted BlockchainRecord."""
+
+    id: UUID
+    batch_id: UUID
+    lab_evidence_id: UUID | None = None
+    event_type: str
+    transaction_hash: str | None = None
+    status: BlockchainStatus
+    network: str
+    contract_address: str | None = None
+    block_number: int | None = None
+    recorded_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

@@ -185,7 +185,7 @@ def test_batch_registration_uses_batch_code_and_zero_metadata_hash(session: Sess
     mock_client = MockBlockchainClient(network_name="test-net")
     service = BlockchainService(client=mock_client)
 
-    record = service.register_batch_on_chain(session, batch.id)
+    record = service.register_batch_on_chain(session, batch.id, actor_user_id=processor.id)
 
     # 1. Verify mock client received Batch.batch_code (NOT Batch.id)
     assert len(mock_client.registered_batches) == 1
@@ -221,7 +221,7 @@ def test_batch_registration_fails_for_nonexistent_batch(session: Session) -> Non
     service = BlockchainService(client=mock_client)
 
     with pytest.raises(ValueError, match="not found"):
-        service.register_batch_on_chain(session, uuid4())
+        service.register_batch_on_chain(session, uuid4(), actor_user_id=uuid4())
 
 
 # ===========================================================================
@@ -247,7 +247,7 @@ def test_record_evidence_maps_file_hash_sha256_to_exact_bytes32(session: Session
     mock_client = MockBlockchainClient(network_name="sepolia-mock")
     service = BlockchainService(client=mock_client)
 
-    record = service.record_evidence_on_chain(session, evidence.id)
+    record = service.record_evidence_on_chain(session, evidence.id, actor_user_id=processor.id)
 
     # 1. Verify client received exact 32-byte digest matching file_hash_sha256
     assert len(mock_client.recorded_evidences) == 1
@@ -281,7 +281,7 @@ def test_record_evidence_fails_for_nonexistent_evidence(session: Session) -> Non
     service = BlockchainService(client=mock_client)
 
     with pytest.raises(ValueError, match="Lab evidence with ID.*not found"):
-        service.record_evidence_on_chain(session, uuid4())
+        service.record_evidence_on_chain(session, uuid4(), actor_user_id=uuid4())
 
 
 # ===========================================================================
@@ -296,7 +296,7 @@ def test_unconfigured_client_raises_blockchain_not_configured_error(session: Ses
     service = BlockchainService(client=unconfigured_client)
 
     with pytest.raises(BlockchainNotConfiguredError, match="not configured or disabled"):
-        service.register_batch_on_chain(session, batch.id)
+        service.register_batch_on_chain(session, batch.id, actor_user_id=processor.id)
 
 
 def test_client_failure_translates_to_backend_error_and_records_failed_status(session: Session) -> None:
@@ -310,7 +310,7 @@ def test_client_failure_translates_to_backend_error_and_records_failed_status(se
     service = BlockchainService(client=failing_client)
 
     with pytest.raises(BlockchainClientError, match="Gas limit exceeded"):
-        service.register_batch_on_chain(session, batch.id)
+        service.register_batch_on_chain(session, batch.id, actor_user_id=processor.id)
 
     # Verify a failed audit record was logged in PostgreSQL
     failed_record = session.scalar(
@@ -343,8 +343,8 @@ def test_get_batch_blockchain_records_retrieves_audit_history(session: Session) 
     service = BlockchainService(client=mock_client)
 
     # Perform registration and evidence recording
-    service.register_batch_on_chain(session, batch.id)
-    service.record_evidence_on_chain(session, evidence.id)
+    service.register_batch_on_chain(session, batch.id, actor_user_id=processor.id)
+    service.record_evidence_on_chain(session, evidence.id, actor_user_id=processor.id)
 
     history = service.get_batch_blockchain_records(session, batch.id)
     assert len(history) == 2
@@ -370,7 +370,7 @@ def test_db_commit_failure_rolls_back_and_prevents_false_confirmed_state(
     monkeypatch.setattr(Session, "commit", mock_commit)
 
     with pytest.raises(RuntimeError, match="Simulated database write error"):
-        service.register_batch_on_chain(session, batch.id)
+        service.register_batch_on_chain(session, batch.id, actor_user_id=processor.id)
 
     # Clear monkeypatch to query cleanly
     monkeypatch.undo()
@@ -406,7 +406,7 @@ def test_add_evidence_on_chain_aligns_with_solidity_add_evidence(session: Sessio
     service = BlockchainService(client=mock_client)
 
     # Call new add_evidence_on_chain method
-    record = service.add_evidence_on_chain(session, evidence.id)
+    record = service.add_evidence_on_chain(session, evidence.id, actor_user_id=processor.id)
 
     assert len(mock_client.added_evidences) == 1
     call = mock_client.added_evidences[0]

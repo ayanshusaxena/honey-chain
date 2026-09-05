@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.blockchain.adapter import (
     BlockchainClient,
+    EthereumJsonRpcAdapter,
     MockBlockchainClient,
     UnconfiguredBlockchainClient,
 )
@@ -41,11 +42,7 @@ class BlockchainService:
         if client is not None:
             self.client = client
         elif self.settings.is_configured():
-            # Ready to switch to EthereumJsonRpcAdapter once ABI is provided
-            self.client = MockBlockchainClient(
-                network_name=self.settings.network_name,
-                contract_address=self.settings.contract_address or "0x0000000000000000000000000000000000000000",
-            )
+            self.client = EthereumJsonRpcAdapter(settings=self.settings)
         else:
             self.client = UnconfiguredBlockchainClient()
 
@@ -53,6 +50,7 @@ class BlockchainService:
         self,
         session: Session,
         batch_id: UUID,
+        actor_user_id: UUID,
     ) -> BlockchainRecord:
         """Register a processing batch on the blockchain contract.
 
@@ -117,7 +115,7 @@ class BlockchainService:
             event_type="BLOCKCHAIN_BATCH_REGISTERED",
             entity_type="BLOCKCHAIN_RECORD",
             entity_id=record.id,
-            actor_user_id=batch.processor_id,
+            actor_user_id=actor_user_id,
             timestamp=datetime.now(UTC),
             metadata_json={
                 "batch_id": str(batch.id),
@@ -140,6 +138,7 @@ class BlockchainService:
         self,
         session: Session,
         evidence_id: UUID,
+        actor_user_id: UUID,
     ) -> BlockchainRecord:
         """Record a verified LabEvidence file hash on the blockchain contract (addEvidence).
 
@@ -215,7 +214,7 @@ class BlockchainService:
             event_type="BLOCKCHAIN_EVIDENCE_RECORDED",
             entity_type="BLOCKCHAIN_RECORD",
             entity_id=record.id,
-            actor_user_id=batch.processor_id,
+            actor_user_id=actor_user_id,
             timestamp=datetime.now(UTC),
             metadata_json={
                 "batch_id": str(batch.id),

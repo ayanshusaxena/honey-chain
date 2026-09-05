@@ -14,11 +14,13 @@ from app.blockchain.config import (
     BlockchainSettings,
     BlockchainTransactionError,
 )
+from app.blockchain.router import router
 from app.blockchain.schemas import (
     EMPTY_METADATA_HASH,
     EMPTY_METADATA_HASH_HEX,
     AddEvidencePayload,
     BatchRegistrationPayload,
+    BlockchainRecordResponse,
     BlockchainTxResult,
     EvidenceRecordPayload,
     bytes32_to_hex,
@@ -32,6 +34,7 @@ __all__ = [
     "BlockchainClientError",
     "BlockchainError",
     "BlockchainNotConfiguredError",
+    "BlockchainRecordResponse",
     "BlockchainService",
     "BlockchainSettings",
     "BlockchainTransactionError",
@@ -46,5 +49,6 @@ __all__ = [
     "UnconfiguredBlockchainClient",
     "bytes32_to_hex",
     "get_blockchain_service",
+    "router",
     "sha256_hex_to_bytes32",
 ]
