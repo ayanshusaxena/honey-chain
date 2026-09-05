@@ -1,1 +1,5 @@
-"""Telemetry domain; implementation will be added in a later chunk."""
+"""Telemetry domain for append-only sensor measurements and queries."""
+
+from app.telemetry.router import router
+
+__all__ = ["router"]

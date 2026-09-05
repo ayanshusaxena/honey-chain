@@ -202,3 +202,50 @@ curl -X PATCH http://127.0.0.1:8000/hives/YOUR_HIVE_UUID \
     "is_active": false
   }'
 ```
+
+## Telemetry Ingestion & Querying
+
+Telemetry endpoints provide append-only ingestion and retrieval of IoT hive sensor metrics under `/telemetry` and `/hives/{hive_id}/telemetry`.
+
+### Endpoints & Role Authorization
+
+| Method | Endpoint | Allowed Roles | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/telemetry` | `ADMIN`, `BEEKEEPER` | Ingest telemetry specifying `hive_id` in request body. `BEEKEEPER` can only submit to own hives. |
+| `POST` | `/hives/{hive_id}/telemetry` | `ADMIN`, `BEEKEEPER` | Ingest telemetry directly for the specified hive. `BEEKEEPER` can only submit to own hives. |
+| `GET` | `/telemetry` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | List telemetry. `BEEKEEPER` sees own hives; `ADMIN` and `PROCESSOR` see all. Optional `?hive_id=` filter. |
+| `GET` | `/hives/{hive_id}/telemetry` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | List all telemetry records for the specified hive. |
+| `GET` | `/telemetry/{telemetry_id}` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | Retrieve a single telemetry record. |
+
+*Note: Telemetry is strictly **append-only** (no update or delete endpoints). `received_at` is generated automatically by the backend in UTC. `PROCESSOR` is read-only.*
+
+### HTTP Status Codes
+
+- `200 OK`: Successful retrieval.
+- `201 Created`: Successful telemetry ingestion.
+- `401 Unauthorized`: Missing or invalid bearer token.
+- `403 Forbidden`: Authenticated user lacks permission or does not own the target hive.
+- `404 Not Found`: Target hive or telemetry record does not exist.
+- `422 Unprocessable Entity`: Malformed request, negative weight, out-of-range humidity (0–100), or invalid quality enum.
+
+### Example: Submit Telemetry
+
+```bash
+curl -X POST http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/telemetry \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_timestamp": "2026-09-04T12:00:00Z",
+    "weight_kg": 28.5,
+    "temperature_c": 35.2,
+    "humidity_pct": 52.0,
+    "quality": "VALID"
+  }'
+```
+
+### Example: Query Hive Telemetry
+
+```bash
+curl http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/telemetry \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
