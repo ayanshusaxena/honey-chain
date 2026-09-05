@@ -249,3 +249,52 @@ curl -X POST http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/telemetry \
 curl http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/telemetry \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
+
+## Risk & Anomaly Evaluation
+
+Risk evaluation endpoints provide observational anomaly scoring and telemetry quality assessments under `/hives/{hive_id}/risk` and `/risk/{risk_event_id}`.
+
+### Architectural Invariants
+
+- **PostgreSQL Operational Truth**: Risk events are stored in the PostgreSQL database as audit records.
+- **Strictly Observational**: AI / rule evaluation does not directly mutate `Batch.status`, create `HOLD` or `RECALL`, alter harvest records, or write blockchain transactions.
+- **Deterministic Rule Engine**: Anomaly evaluation calculates a normalized risk score `[0.0, 1.0]` and assigns levels `LOW`, `MEDIUM`, or `HIGH`.
+- **Quality Awareness**: Telemetry records flagged with `INVALID` quality are rejected for risk evaluation (`HTTP 422`).
+
+### Endpoints & Role Authorization
+
+| Method | Endpoint | Allowed Roles | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/hives/{hive_id}/risk/evaluate` | `ADMIN`, `BEEKEEPER` | Evaluate telemetry and generate a risk event. Optional `telemetry_id` in body; defaults to latest valid telemetry. `BEEKEEPER` restricted to own hives. |
+| `POST` | `/hives/{hive_id}/risk` | `ADMIN`, `BEEKEEPER` | Alias for risk evaluation endpoint. |
+| `GET` | `/hives/{hive_id}/risk` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | List risk events for a hive in descending evaluated timestamp order. `BEEKEEPER` restricted to own hives. |
+| `GET` | `/risk/{risk_event_id}` | `ADMIN`, `BEEKEEPER`, `PROCESSOR` | Retrieve a specific risk event by ID. `BEEKEEPER` restricted to events for own hives. |
+
+*Note: `PROCESSOR` has read-only visibility into risk events for supply-chain auditing and cannot trigger evaluations.*
+
+### HTTP Status Codes
+
+- `200 OK`: Successful retrieval of risk event(s).
+- `201 Created`: Successful evaluation and persistence of risk event.
+- `401 Unauthorized`: Missing or invalid bearer token.
+- `403 Forbidden`: Authenticated user lacks permission or does not own target hive.
+- `404 Not Found`: Target hive, telemetry record, or risk event does not exist.
+- `422 Unprocessable Entity`: No non-invalid telemetry available, or specified telemetry record has `INVALID` quality.
+
+### Example: Trigger Risk Evaluation
+
+```bash
+curl -X POST http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/risk/evaluate \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "telemetry_id": "YOUR_TELEMETRY_UUID"
+  }'
+```
+
+### Example: Query Hive Risk Events
+
+```bash
+curl http://127.0.0.1:8000/hives/YOUR_HIVE_UUID/risk \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
