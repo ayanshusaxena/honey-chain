@@ -14,6 +14,7 @@ import {
   Blocks,
   BarChart3,
   Users,
+  Cpu,
   LogOut,
   ArrowRight,
   LucideIcon,
@@ -41,6 +42,7 @@ const MENU_ITEMS: MenuItem[] = [
   { name: "Lab Evidence", path: "/lab-evidence", icon: FileText, group: "VERIFICATION" },
   { name: "Blockchain", path: "/blockchain", icon: Blocks, group: "VERIFICATION", allowedRoles: ["ADMIN"] },
   { name: "Analytics", path: "/analytics", icon: BarChart3, group: "MANAGEMENT" },
+  { name: "IoT Simulator", path: "/simulator", icon: Cpu, group: "MANAGEMENT", allowedRoles: ["ADMIN"] },
   { name: "Users", path: "/users", icon: Users, group: "MANAGEMENT", allowedRoles: ["ADMIN"] },
 ];
 
