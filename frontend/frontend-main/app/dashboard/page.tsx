@@ -2,7 +2,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import {
   LayoutDashboard,
   Package,
@@ -18,16 +18,23 @@ import {
   ShieldAlert,
   ArrowRight,
   AlertTriangle,
-  Clock3,
   MapPin,
   Leaf,
   Factory,
   CheckCircle2,
   LucideIcon,
   Loader2,
+  ChevronDown,
+  RefreshCw,
+  ShieldCheck,
+  ExternalLink,
+  Sun,
+  Moon,
 } from "lucide-react";
-import { logout, getCurrentSession } from "../../lib/auth";
+import { logout, getCurrentSession, getAccessToken } from "../../lib/auth";
 import { apiClient } from "../../lib/api-client";
+import { ApiError } from "../../lib/errors";
+import { useTheme } from "../../components/ThemeProvider";
 import type {
   UserRole,
   HiveResponse,
@@ -35,29 +42,52 @@ import type {
   BatchResponse,
 } from "../../types/contracts";
 
-/**
- * Navigation menu items with optional role restriction.
- * If allowedRoles is undefined, item is visible to all roles.
- * Source: backend/app/models/enums.py UserRole: ADMIN | BEEKEEPER | PROCESSOR
- */
-type MenuItem = readonly [string, string, LucideIcon, UserRole[]?];
+interface MenuItem {
+  name: string;
+  path: string;
+  icon: LucideIcon;
+  allowedRoles?: UserRole[];
+  group: "OPERATIONS" | "PROCESSING" | "VERIFICATION" | "MANAGEMENT";
+}
 
-const menu: MenuItem[] = [
-  ["Dashboard", "/dashboard", LayoutDashboard],
-  ["Hives", "/hives", Hexagon],
-  ["Telemetry", "/telemetry", Radio],
-  ["Risk", "/risk", ShieldAlert],
-  ["Harvests", "/harvests", Leaf, ["ADMIN", "BEEKEEPER"]],
-  ["Collection Lots", "/collection-lots", GitBranch, ["ADMIN", "PROCESSOR"]],
-  ["Batches", "/batches", Package, ["ADMIN", "PROCESSOR"]],
-  ["Lab Evidence", "/lab-evidence", FileText],
-  ["Blockchain", "/blockchain", Blocks, ["ADMIN"]],
-  ["Analytics", "/analytics", BarChart3],
-  ["Users", "/users", Users, ["ADMIN"]],
+const MENU_ITEMS: MenuItem[] = [
+  { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard, group: "OPERATIONS" },
+  { name: "Hives", path: "/hives", icon: Hexagon, group: "OPERATIONS" },
+  { name: "Telemetry", path: "/telemetry", icon: Radio, group: "OPERATIONS" },
+  { name: "Risk Assessment", path: "/risk", icon: ShieldAlert, group: "OPERATIONS" },
+  { name: "Harvests", path: "/harvests", icon: Leaf, group: "PROCESSING", allowedRoles: ["ADMIN", "BEEKEEPER"] },
+  { name: "Collection Lots", path: "/collection-lots", icon: GitBranch, group: "PROCESSING", allowedRoles: ["ADMIN", "PROCESSOR"] },
+  { name: "Batches", path: "/batches", icon: Package, group: "PROCESSING", allowedRoles: ["ADMIN", "PROCESSOR"] },
+  { name: "Lab Evidence", path: "/lab-evidence", icon: FileText, group: "VERIFICATION" },
+  { name: "Blockchain", path: "/blockchain", icon: Blocks, group: "VERIFICATION", allowedRoles: ["ADMIN"] },
+  { name: "Analytics", path: "/analytics", icon: BarChart3, group: "MANAGEMENT" },
+  { name: "Users", path: "/users", icon: Users, group: "MANAGEMENT", allowedRoles: ["ADMIN"] },
 ];
 
-function goTo(path: string) {
-  window.location.href = path;
+function getRoleLabel(role: UserRole | null): string {
+  switch (role) {
+    case "ADMIN":
+      return "Administrator";
+    case "BEEKEEPER":
+      return "Beekeeper";
+    case "PROCESSOR":
+      return "Processor";
+    default:
+      return "Operator";
+  }
+}
+
+function getRoleBadgeStyle(role: UserRole | null): string {
+  switch (role) {
+    case "ADMIN":
+      return "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60";
+    case "BEEKEEPER":
+      return "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60";
+    case "PROCESSOR":
+      return "bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60";
+    default:
+      return "bg-slate-100 text-slate-800 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
+  }
 }
 
 function StatCard({
@@ -65,119 +95,162 @@ function StatCard({
   value,
   subtitle,
   icon: Icon,
-  iconBox,
+  iconBg,
   iconColor,
-  path,
+  onClick,
 }: {
   title: string;
   value: string;
   subtitle: string;
   icon: LucideIcon;
-  iconBox: string;
+  iconBg: string;
   iconColor: string;
-  path: string;
+  onClick: () => void;
 }) {
   return (
     <button
-      onClick={() => goTo(path)}
-      className="group w-full rounded-2xl border border-slate-200 bg-white p-6 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      onClick={onClick}
+      className="group flex flex-col justify-between rounded-xl border border-slate-200/80 bg-white p-5 text-left shadow-sm transition hover:border-amber-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500/20 dark:border-slate-800/90 dark:bg-slate-900/90 dark:hover:border-amber-500/40"
     >
-      <div className="flex items-start justify-between">
-        <div
-          className={`flex h-12 w-12 items-center justify-center rounded-2xl ${iconBox}`}
-        >
-          <Icon className={`h-6 w-6 ${iconColor}`} />
-        </div>
-
-        <div
-          className={`flex h-10 w-10 items-center justify-center rounded-full ${iconBox}`}
-        >
-          <ArrowRight className={`h-5 w-5 ${iconColor}`} />
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          {title}
+        </span>
+        <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${iconBg}`}>
+          <Icon className={`h-5 w-5 ${iconColor}`} />
         </div>
       </div>
 
-      <p className="mt-5 text-sm font-semibold text-slate-600">{title}</p>
-
-      <p className="mt-1 text-4xl font-bold tracking-tight text-slate-900">
-        {value}
-      </p>
-
-      <p className="mt-2 text-sm text-slate-500">{subtitle}</p>
+      <div className="mt-4">
+        <p className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">{value}</p>
+        <div className="mt-1 flex items-center justify-between">
+          <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>
+          <ArrowRight className="h-4 w-4 text-slate-400 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100 dark:text-slate-500" />
+        </div>
+      </div>
     </button>
   );
 }
 
-function WorkflowCard({
-  title,
-  description,
-  icon: Icon,
-  path,
-}: {
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  path: string;
-}) {
-  return (
-    <button
-      onClick={() => goTo(path)}
-      className="flex w-full items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left transition hover:shadow-md"
-    >
-      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50">
-        <Icon className="h-5 w-5 text-blue-600" />
-      </div>
+let cachedSession: { userId: string; role: UserRole } | null = null;
+let lastToken: string | null = null;
 
-      <div className="min-w-0 flex-1">
-        <p className="font-semibold text-slate-800">{title}</p>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
-      </div>
-
-      <ArrowRight className="h-5 w-5 text-slate-400" />
-    </button>
-  );
+function getSessionSnapshot(): { userId: string; role: UserRole } | null {
+  if (typeof window === "undefined") return null;
+  const token = getAccessToken();
+  if (token !== lastToken) {
+    lastToken = token;
+    cachedSession = getCurrentSession();
+  }
+  return cachedSession;
 }
+
+const sessionStore = {
+  subscribe(listener: () => void) {
+    if (typeof window === "undefined") return () => {};
+    const onAuth = () => {
+      lastToken = null; // invalidate cache
+      listener();
+    };
+    window.addEventListener("storage", onAuth);
+    window.addEventListener("auth-state-changed", onAuth);
+    return () => {
+      window.removeEventListener("storage", onAuth);
+      window.removeEventListener("auth-state-changed", onAuth);
+    };
+  },
+  getSnapshot(): { userId: string; role: UserRole } | null {
+    return getSessionSnapshot();
+  },
+  getServerSnapshot(): { userId: string; role: UserRole } | null {
+    return null;
+  },
+};
 
 export default function DashboardPage() {
   const pathname = usePathname();
   const router = useRouter();
-  const [role] = useState<UserRole | null>(() => {
-    if (typeof window === "undefined") return null;
-    return getCurrentSession()?.role ?? null;
-  });
+  const { isDark, toggleTheme } = useTheme();
+
+  const session = useSyncExternalStore(
+    sessionStore.subscribe,
+    sessionStore.getSnapshot,
+    sessionStore.getServerSnapshot
+  );
 
   const [liveHives, setLiveHives] = useState<HiveResponse[]>([]);
   const [liveHarvests, setLiveHarvests] = useState<HarvestResponse[]>([]);
   const [liveBatches, setLiveBatches] = useState<BatchResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
-  // Filter menu items by current user role (UX visibility only — backend enforces auth)
-  const visibleMenu = menu.filter(([, , , allowedRoles]) => {
-    if (!allowedRoles) return true; // visible to all
-    if (!role) return false; // hide restricted items until role is known
-    return allowedRoles.includes(role);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+
+  const role = session?.role ?? null;
+
+  // Filter menu items by current role
+  const visibleMenu = MENU_ITEMS.filter((item) => {
+    if (!item.allowedRoles) return true;
+    if (!role) return false;
+    return item.allowedRoles.includes(role);
   });
 
+  const menuGroups = Array.from(new Set(visibleMenu.map((m) => m.group)));
+
   const handleLogout = () => {
-    logout(); // clears localStorage and cookie
+    logout();
     router.push("/login");
+  };
+
+  const handleRefresh = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const hivesPromise = apiClient.get<HiveResponse[]>("/hives");
+      const harvestsPromise =
+        role === "ADMIN" || role === "BEEKEEPER"
+          ? apiClient.get<HarvestResponse[]>("/harvests")
+          : Promise.resolve([] as HarvestResponse[]);
+      const batchesPromise =
+        role === "ADMIN" || role === "PROCESSOR"
+          ? apiClient.get<BatchResponse[]>("/batches")
+          : Promise.resolve([] as BatchResponse[]);
+
+      const [hivesData, harvestsData, batchesData] = await Promise.all([
+        hivesPromise,
+        harvestsPromise,
+        batchesPromise,
+      ]);
+
+      setLiveHives(hivesData || []);
+      setLiveHarvests(harvestsData || []);
+      setLiveBatches(batchesData || []);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.displayMessage);
+      } else {
+        setError("Unable to connect to Honey Chain services. Check backend status.");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     let active = true;
 
-    const loadDashboardData = async () => {
+    const fetchData = async () => {
       try {
-        const hivesPromise = apiClient
-          .get<HiveResponse[]>("/hives")
-          .catch(() => []);
+        const hivesPromise = apiClient.get<HiveResponse[]>("/hives");
         const harvestsPromise =
           role === "ADMIN" || role === "BEEKEEPER"
-            ? apiClient.get<HarvestResponse[]>("/harvests").catch(() => [])
-            : Promise.resolve([]);
+            ? apiClient.get<HarvestResponse[]>("/harvests")
+            : Promise.resolve([] as HarvestResponse[]);
         const batchesPromise =
           role === "ADMIN" || role === "PROCESSOR"
-            ? apiClient.get<BatchResponse[]>("/batches").catch(() => [])
-            : Promise.resolve([]);
+            ? apiClient.get<BatchResponse[]>("/batches")
+            : Promise.resolve([] as BatchResponse[]);
 
         const [hivesData, harvestsData, batchesData] = await Promise.all([
           hivesPromise,
@@ -189,396 +262,585 @@ export default function DashboardPage() {
         setLiveHives(hivesData || []);
         setLiveHarvests(harvestsData || []);
         setLiveBatches(batchesData || []);
+        setError(null);
+      } catch (err) {
+        if (!active) return;
+        if (err instanceof ApiError) {
+          setError(err.displayMessage);
+        } else {
+          setError("Unable to connect to Honey Chain services. Check backend status.");
+        }
       } finally {
         if (active) setLoading(false);
       }
     };
 
-    loadDashboardData();
+    fetchData();
 
     return () => {
       active = false;
     };
   }, [role]);
 
+  // Close account menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        accountMenuRef.current &&
+        !accountMenuRef.current.contains(event.target as Node)
+      ) {
+        setAccountMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const alertsCount = liveHives.filter((h) => h.status !== "ACTIVE").length;
+
   return (
-    <div className="min-h-screen bg-transparent text-slate-900">
+    <div className="min-h-screen bg-slate-50 dark:bg-[#070e1e] text-slate-900 dark:text-slate-100">
       <div className="flex min-h-screen">
+        {/* ================================================================ */}
         {/* SIDEBAR */}
-        <aside className="fixed left-0 top-0 z-20 flex h-screen w-[250px] flex-col overflow-hidden bg-gradient-to-b from-[#061735] via-[#092653] to-[#071b3d] text-white shadow-[8px_0_35px_rgba(7,27,61,0.18)]">
-          {/* Logo */}
-          <div className="px-7 pt-7">
-            <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-yellow-400 to-orange-500 shadow-lg">
-                <Hexagon className="h-8 w-8 text-white" />
-              </div>
-
-              <div>
-                <h1 className="text-xl font-bold tracking-tight">
-                  Honey Chain
-                </h1>
-                <p className="text-sm text-blue-200">
-                  Traceability Platform
-                </p>
-              </div>
+        {/* ================================================================ */}
+        <aside className="fixed left-0 top-0 z-30 flex h-screen w-64 flex-col overflow-y-auto bg-gradient-to-b from-[#061735] via-[#092653] to-[#071b3d] dark:from-[#030b1a] dark:via-[#051329] dark:to-[#020814] text-white shadow-xl dark:border-r dark:border-slate-800">
+          {/* Logo Branding */}
+          <div className="flex items-center gap-3 border-b border-white/10 px-6 py-5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-amber-500 shadow-md">
+              <Hexagon className="h-6 w-6 text-slate-900" />
             </div>
-          </div>
-
-          {/* Workspace */}
-          <div className="mt-10 px-4">
-            <p className="px-3 text-xs font-bold tracking-wider text-blue-200">
-              WORKSPACE
-            </p>
-
-            <div className="mt-4 space-y-2">
-              {visibleMenu.map(([name, path, Icon]) => {
-                const active = pathname === path;
-
-                return (
-                  <button
-                    key={name}
-                    onClick={() => goTo(path)}
-                    className={`flex w-full items-center gap-4 rounded-xl px-4 py-3.5 text-left transition ${
-                      active
-                        ? "bg-gradient-to-r from-orange-400 to-amber-500 text-white shadow-lg"
-                        : "text-slate-200 hover:bg-white/10"
-                    }`}
-                  >
-                    <Icon className="h-5 w-5 shrink-0" />
-
-                    <span className="flex-1 text-sm font-semibold">
-                      {name}
-                    </span>
-
-                    {active && <ArrowRight className="h-4 w-4" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Bottom decoration */}
-          <div className="pointer-events-none absolute -bottom-10 -left-10 opacity-20">
-            <Hexagon className="h-32 w-32 text-orange-400" />
-          </div>
-
-          <div className="mt-auto px-7 pb-7">
-            {role && (
-              <p className="mb-3 text-xs font-bold uppercase tracking-wider text-blue-300">
-                {role}
+            <div>
+              <h1 className="text-base font-bold tracking-tight text-white">
+                Honey Chain
+              </h1>
+              <p className="text-xs text-blue-200/80">
+                Traceability Platform
               </p>
-            )}
+            </div>
+          </div>
+
+          {/* Navigation Items Grouped */}
+          <nav className="flex-1 space-y-6 px-3 py-5">
+            {menuGroups.map((group) => {
+              const items = visibleMenu.filter((m) => m.group === group);
+              return (
+                <div key={group}>
+                  <p className="px-3 text-[10px] font-bold tracking-wider text-blue-300/70">
+                    {group}
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {items.map((item) => {
+                      const active = pathname === item.path;
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.name}
+                          onClick={() => router.push(item.path)}
+                          className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs font-semibold transition ${
+                            active
+                              ? "bg-gradient-to-r from-amber-500 to-amber-600 text-white shadow-sm"
+                              : "text-slate-300 hover:bg-white/10 hover:text-white"
+                          }`}
+                        >
+                          <Icon
+                            className={`h-4 w-4 shrink-0 ${
+                              active ? "text-white" : "text-slate-400 group-hover:text-white"
+                            }`}
+                          />
+                          <span className="flex-1">{item.name}</span>
+                          {active && <ArrowRight className="h-3 w-3 opacity-80" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </nav>
+
+          {/* Sidebar Footer */}
+          <div className="border-t border-white/10 p-4">
+            <div className="mb-3 flex items-center justify-between rounded-lg bg-white/5 p-2.5">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500/20 text-xs font-bold text-amber-300">
+                  {role ? role.slice(0, 2) : "OP"}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-white">
+                    {getRoleLabel(role)}
+                  </p>
+                  <p className="text-[10px] text-blue-200/60">
+                    Active Session
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <button
               onClick={handleLogout}
-              className="flex items-center gap-3 text-sm text-slate-300 hover:text-white"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 hover:text-white"
             >
-              <LogOut className="h-5 w-5" />
-              Logout
+              <LogOut className="h-4 w-4" />
+              <span>Sign out</span>
             </button>
           </div>
         </aside>
 
-        {/* MAIN */}
-        <main className="ml-[250px] min-h-screen flex-1 bg-[radial-gradient(circle_at_85%_8%,rgba(255,193,7,0.45),transparent_35%),radial-gradient(circle_at_15%_90%,rgba(245,158,11,0.30),transparent_35%),linear-gradient(135deg,#fff8dc_0%,#fffaf0_45%,#f4f8ff_100%)]">
-
-          {/* HEADER */}
-          <header className="flex items-center justify-between px-12 pb-5 pt-8">
+        {/* ================================================================ */}
+        {/* MAIN WORKSPACE */}
+        {/* ================================================================ */}
+        <main className="ml-64 flex-1 overflow-x-hidden bg-slate-50/70 dark:bg-[#070e1e] p-6 lg:p-8 transition-colors duration-150">
+          {/* TOP BAR */}
+          <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-semibold text-[#c58a24]">
-                Honey Chain
-              </p>
-
-              <h2 className="mt-1 text-4xl font-bold tracking-tight text-[#092653]">
-                Dashboard
+              <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+                <span>Honey Chain</span>
+                <span>/</span>
+                <span className="text-slate-700 dark:text-slate-300 font-semibold">Operations</span>
+              </div>
+              <h2 className="mt-1 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                Operational Dashboard
               </h2>
             </div>
 
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="font-semibold text-[#092653]">
-                  Honey Chain Admin
-                </p>
-                <p className="text-sm text-slate-500">
-                  Administrator
-                </p>
-              </div>
+            {/* Top Right Controls: [ Refresh ] [ Theme ] [ Administrator ▼ ] */}
+            <div className="flex items-center gap-2.5">
+              {/* Refresh Control */}
+              <button
+                onClick={handleRefresh}
+                disabled={loading}
+                title="Refresh dashboard data"
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-900/90 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-amber-500" : ""}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
 
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-yellow-400 to-orange-400 font-bold text-[#18325d]">
-                HC
+              {/* Theme Toggle Button */}
+              <button
+                onClick={toggleTheme}
+                type="button"
+                aria-label={isDark ? "Switch to Honey Chain Light theme" : "Switch to Dark theme"}
+                title={isDark ? "Switch to Honey Chain Light" : "Switch to Dark theme"}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-500/20 dark:border-slate-800 dark:bg-slate-900/90 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                {isDark ? (
+                  <>
+                    <Sun className="h-3.5 w-3.5 text-amber-400" />
+                    <span className="hidden sm:inline">Light</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="h-3.5 w-3.5 text-slate-600 dark:text-slate-400" />
+                    <span className="hidden sm:inline">Dark</span>
+                  </>
+                )}
+              </button>
+
+              {/* Dynamic Account Control */}
+              <div className="relative" ref={accountMenuRef}>
+                <button
+                  onClick={() => setAccountMenuOpen(!accountMenuOpen)}
+                  aria-expanded={accountMenuOpen}
+                  aria-haspopup="true"
+                  className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-1.5 pr-3 shadow-sm transition hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500/20 dark:border-slate-800 dark:bg-slate-900/90 dark:hover:border-slate-700"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 text-xs font-bold text-white shadow-sm">
+                    {role ? role.slice(0, 2) : "HC"}
+                  </div>
+                  <div className="hidden text-left sm:block">
+                    <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-tight">
+                      {getRoleLabel(role)}
+                    </p>
+                    <p className="text-[10px] font-medium text-slate-500 dark:text-slate-400 leading-tight">
+                      Honey Chain
+                    </p>
+                  </div>
+                  <ChevronDown className={`h-4 w-4 text-slate-400 transition ${accountMenuOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {/* Account Popover Menu */}
+                {accountMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-lg ring-1 ring-black/5 z-50 dark:border-slate-800 dark:bg-slate-900 dark:ring-white/10">
+                    <div className="border-b border-slate-100 dark:border-slate-800 px-3 py-2.5">
+                      <p className="text-xs font-bold text-slate-900 dark:text-white">
+                        {getRoleLabel(role)} Session
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        ID: {session?.userId || "Active Session"}
+                      </p>
+                      <div className="mt-2">
+                        <span className={`inline-block rounded border px-2 py-0.5 text-[10px] font-bold uppercase ${getRoleBadgeStyle(role)}`}>
+                          Role: {role || "AUTHENTICATED"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="px-1 py-1.5">
+                      <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-slate-600 dark:text-slate-300">
+                        <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                        <span>Cryptographically Authenticated</span>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-slate-100 dark:border-slate-800 pt-1">
+                      <button
+                        onClick={handleLogout}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-semibold text-red-600 dark:text-red-400 transition hover:bg-red-50 dark:hover:bg-red-950/40"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        <span>Sign out of session</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </header>
 
-          <div className="px-12 pb-12">
+          {/* API Error Notification */}
+          {error && (
+            <div className="mb-6 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/30 p-4 text-sm font-medium text-red-700 dark:text-red-300 shadow-sm">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-red-500" />
+                <span>{error}</span>
+              </div>
+              <button
+                onClick={handleRefresh}
+                className="rounded-lg bg-red-100 dark:bg-red-900/50 px-3 py-1.5 text-xs font-bold text-red-800 dark:text-red-200 transition hover:bg-red-200 dark:hover:bg-red-900/80"
+              >
+                Retry
+              </button>
+            </div>
+          )}
 
-            {/* WELCOME */}
-            <section className="relative overflow-hidden rounded-3xl border border-amber-100 bg-gradient-to-r from-[#edf6ff] via-white to-[#fff8df] px-7 py-8 shadow-[0_8px_30px_rgba(245,158,11,0.12)]">
-              <div className="relative z-10 max-w-2xl">
-                <h3 className="text-3xl font-bold text-[#092653]">
-                  Welcome back <span>👋</span>
+          {/* STATS METRIC GRID */}
+          <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              title="Active Hives"
+              value={loading ? "..." : String(liveHives.length)}
+              subtitle="Registered apiary units"
+              icon={Hexagon}
+              iconBg="bg-amber-50 dark:bg-amber-950/40"
+              iconColor="text-amber-600 dark:text-amber-400"
+              onClick={() => router.push("/hives")}
+            />
+            <StatCard
+              title="Operational Alerts"
+              value={loading ? "..." : String(alertsCount)}
+              subtitle={alertsCount === 0 ? "All hives nominal" : "Requires attention"}
+              icon={AlertTriangle}
+              iconBg={alertsCount > 0 ? "bg-red-50 dark:bg-red-950/40" : "bg-emerald-50 dark:bg-emerald-950/40"}
+              iconColor={alertsCount > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}
+              onClick={() => router.push("/risk")}
+            />
+            <StatCard
+              title="Harvest Records"
+              value={loading ? "..." : String(liveHarvests.length)}
+              subtitle="Logged collections"
+              icon={Leaf}
+              iconBg="bg-emerald-50 dark:bg-emerald-950/40"
+              iconColor="text-emerald-600 dark:text-emerald-400"
+              onClick={() => router.push("/harvests")}
+            />
+            <StatCard
+              title="Active Batches"
+              value={loading ? "..." : String(liveBatches.length)}
+              subtitle="In processing pipeline"
+              icon={Package}
+              iconBg="bg-blue-50 dark:bg-blue-950/40"
+              iconColor="text-blue-600 dark:text-blue-400"
+              onClick={() => router.push("/batches")}
+            />
+          </section>
+
+          {/* TRACEABILITY OPERATIONAL WORKFLOW LAUNCHER */}
+          <section className="mb-6 rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Traceability Demo Pipeline
                 </h3>
-
-                <p className="mt-2 text-base text-[#58749b]">
-                  Monitor the honey traceability workflow from one place.
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Follow honey from source apiary through IoT telemetry, risk evaluation, and batch lineage.
                 </p>
               </div>
+            </div>
 
-              {/* Honeycomb decoration */}
-              <div className="absolute right-12 top-5 grid grid-cols-2 gap-3 opacity-40">
-                <div className="h-16 w-16 rounded-2xl border-2 border-yellow-300" />
-                <div className="h-16 w-16 rounded-2xl border-2 border-yellow-200" />
-                <div className="h-16 w-16 rounded-2xl border-2 border-yellow-200" />
-                <div className="h-16 w-16 rounded-2xl border-2 border-yellow-300" />
-              </div>
-
-              <div className="absolute right-20 top-12 text-6xl">
-                🐝
-              </div>
-            </section>
-
-            {/* STATS */}
-            <section className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
-              <StatCard
-                title="Total Hives"
-                value={loading ? "..." : String(liveHives.length)}
-                subtitle="Registered hives"
-                icon={Hexagon}
-                iconBox="bg-orange-50"
-                iconColor="text-orange-500"
-                path="/hives"
-              />
-
-              <StatCard
-                title="Active Alerts"
-                value={
-                  loading
-                    ? "..."
-                    : String(
-                        liveHives.filter((h) => h.status !== "ACTIVE").length
-                      )
-                }
-                subtitle="Requires attention"
-                icon={AlertTriangle}
-                iconBox="bg-red-50"
-                iconColor="text-red-500"
-                path="/risk"
-              />
-
-              <StatCard
-                title="Harvests"
-                value={loading ? "..." : String(liveHarvests.length)}
-                subtitle="Recorded harvests"
-                icon={Leaf}
-                iconBox="bg-emerald-50"
-                iconColor="text-emerald-500"
-                path="/harvests"
-              />
-
-              <StatCard
-                title="Batches"
-                value={loading ? "..." : String(liveBatches.length)}
-                subtitle="Processing batches"
-                icon={Package}
-                iconBox="bg-blue-50"
-                iconColor="text-blue-600"
-                path="/batches"
-              />
-            </section>
-
-            {/* HIVE HEALTH */}
-            <section className="mt-7 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50">
-                    <Activity className="h-6 w-6 text-blue-600" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <button
+                onClick={() => router.push("/hives")}
+                className="group flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 p-3 text-left transition hover:border-amber-300 hover:bg-amber-50/50 dark:border-slate-800 dark:bg-slate-800/60 dark:hover:border-amber-500/40 dark:hover:bg-slate-800/90"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+                    <Hexagon className="h-4 w-4" />
                   </div>
-
                   <div>
-                    <h3 className="text-xl font-bold text-[#092653]">
-                      Hive Health Overview
-                    </h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Current hive monitoring status
+                    <p className="text-xs font-bold text-slate-800 group-hover:text-amber-900 dark:text-slate-200 dark:group-hover:text-amber-300">
+                      1. Hives
                     </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">Source apiary registry</p>
                   </div>
                 </div>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-amber-600 dark:text-slate-500 dark:group-hover:text-amber-400" />
+              </button>
 
-                <div className="rounded-full bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-600">
-                  ● ACTIVE
-                </div>
-              </div>
-
-              {loading && (
-                <div className="flex items-center justify-center p-8 text-slate-400">
-                  <Loader2 className="h-6 w-6 animate-spin text-amber-500" />
-                  <span className="ml-3 text-sm font-medium">Loading hives...</span>
-                </div>
-              )}
-
-              {!loading && liveHives.length === 0 && (
-                <p className="mt-6 p-4 text-center text-sm text-slate-400">
-                  No registered hives found.
-                </p>
-              )}
-
-              {!loading && liveHives.length > 0 && (
-                <div className="mt-6 space-y-3">
-                  {liveHives.slice(0, 4).map((hive) => (
-                    <button
-                      key={hive.id}
-                      onClick={() => goTo(`/hives`)}
-                      className="flex w-full items-center gap-4 rounded-2xl border border-slate-200 bg-[#f9fbff] p-4 text-left transition hover:border-blue-200 hover:shadow-sm"
-                    >
-                      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-50">
-                        <Hexagon className="h-6 w-6 text-orange-500" />
-                      </div>
-
-                      <div className="flex-1">
-                        <p className="font-bold text-[#092653]">
-                          {hive.hive_code}
-                        </p>
-
-                        <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
-                          <MapPin className="h-3.5 w-3.5" />
-                          {hive.location_region}
-                        </p>
-                      </div>
-
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          hive.status === "ACTIVE"
-                            ? "bg-emerald-50 text-emerald-600"
-                            : hive.status === "MAINTENANCE"
-                            ? "bg-orange-50 text-orange-600"
-                            : "bg-slate-100 text-slate-600"
-                        }`}
-                      >
-                        {hive.status}
-                      </span>
-
-                      <ArrowRight className="h-5 w-5 text-slate-400" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* ALERTS + BATCHES */}
-            <section className="mt-7 grid grid-cols-1 gap-6 lg:grid-cols-2">
-              {/* ALERTS */}
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
+              <button
+                onClick={() => router.push("/telemetry")}
+                className="group flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 p-3 text-left transition hover:border-amber-300 hover:bg-amber-50/50 dark:border-slate-800 dark:bg-slate-800/60 dark:hover:border-amber-500/40 dark:hover:bg-slate-800/90"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                    <Radio className="h-4 w-4" />
+                  </div>
                   <div>
-                    <h3 className="text-xl font-bold text-[#092653]">
-                      Recent Alerts
-                    </h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Items requiring attention
+                    <p className="text-xs font-bold text-slate-800 group-hover:text-blue-900 dark:text-slate-200 dark:group-hover:text-blue-300">
+                      2. Telemetry
                     </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">IoT sensor monitoring</p>
                   </div>
-
-                  <ShieldAlert className="h-6 w-6 text-red-500" />
                 </div>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-blue-600 dark:text-slate-500 dark:group-hover:text-blue-400" />
+              </button>
 
-                <div className="mt-5 space-y-3">
-                  {liveHives.filter((h) => h.status !== "ACTIVE").length === 0 ? (
-                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-center">
-                      <p className="text-sm font-semibold text-emerald-700">
-                        All hives operating within normal parameters.
+              <button
+                onClick={() => router.push("/risk")}
+                className="group flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 p-3 text-left transition hover:border-amber-300 hover:bg-amber-50/50 dark:border-slate-800 dark:bg-slate-800/60 dark:hover:border-amber-500/40 dark:hover:bg-slate-800/90"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300">
+                    <ShieldAlert className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-800 group-hover:text-red-900 dark:text-slate-200 dark:group-hover:text-red-300">
+                      3. Risk Analysis
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">Rule engine verification</p>
+                  </div>
+                </div>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-red-600 dark:text-slate-500 dark:group-hover:text-red-400" />
+              </button>
+
+              <button
+                onClick={() => router.push("/dashboard/traceability")}
+                className="group flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 p-3 text-left transition hover:border-amber-300 hover:bg-amber-50/50 dark:border-slate-800 dark:bg-slate-800/60 dark:hover:border-amber-500/40 dark:hover:bg-slate-800/90"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                    <GitBranch className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-800 group-hover:text-emerald-900 dark:text-slate-200 dark:group-hover:text-emerald-300">
+                      4. Traceability
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">Batch lineage check</p>
+                  </div>
+                </div>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-400 group-hover:text-emerald-600 dark:text-slate-500 dark:group-hover:text-emerald-400" />
+              </button>
+            </div>
+          </section>
+
+          {/* TWO-COLUMN OPERATIONAL DATA SECTIONS */}
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
+            {/* LEFT COLUMN: Hive Monitoring (7 cols) */}
+            <div className="xl:col-span-7 space-y-6">
+              <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-4">
+                  <div className="flex items-center gap-2.5">
+                    <Activity className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+                        Hive Monitoring Registry
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Live IoT connected hives and field status
                       </p>
                     </div>
-                  ) : (
-                    liveHives
-                      .filter((h) => h.status !== "ACTIVE")
-                      .map((hive) => (
-                        <button
-                          key={hive.id}
-                          onClick={() => goTo(`/risk?hive_id=${hive.id}`)}
-                          className="w-full rounded-2xl border border-red-100 bg-red-50 p-4 text-left hover:shadow-sm"
-                        >
-                          <div className="flex gap-3">
-                            <AlertTriangle className="mt-0.5 h-5 w-5 text-red-500" />
-
-                            <div className="flex-1">
-                              <p className="font-semibold text-slate-800">
-                                Attention required
-                              </p>
-
-                              <p className="mt-1 text-sm text-slate-500">
-                                {hive.hive_code} · {hive.location_region} ({hive.status})
-                              </p>
-
-                              <p className="mt-2 flex items-center gap-1 text-xs text-slate-400">
-                                <Clock3 className="h-3 w-3" />
-                                Review telemetry & risk
-                              </p>
-                            </div>
-
-                            <ArrowRight className="h-5 w-5 text-red-400" />
-                          </div>
-                        </button>
-                      ))
-                  )}
-                </div>
-              </div>
-
-              {/* BATCHES */}
-              <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xl font-bold text-[#092653]">
-                      Recent Processing Batches
-                    </h3>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Latest traceability records
-                    </p>
                   </div>
-
-                  <Factory className="h-6 w-6 text-blue-600" />
+                  <button
+                    onClick={() => router.push("/hives")}
+                    className="flex items-center gap-1 text-xs font-semibold text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+                  >
+                    <span>View all</span>
+                    <ArrowRight className="h-3 w-3" />
+                  </button>
                 </div>
 
                 {loading && (
                   <div className="flex items-center justify-center p-8 text-slate-400">
-                    <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
-                    <span className="ml-3 text-sm font-medium">Loading batches...</span>
+                    <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+                    <span className="ml-2.5 text-xs font-medium">Loading live hive records...</span>
+                  </div>
+                )}
+
+                {!loading && liveHives.length === 0 && (
+                  <p className="p-8 text-center text-xs text-slate-400">
+                    No registered hives found in backend database.
+                  </p>
+                )}
+
+                {!loading && liveHives.length > 0 && (
+                  <div className="mt-4 divide-y divide-slate-100 dark:divide-slate-800/80">
+                    {liveHives.slice(0, 4).map((hive) => (
+                      <div
+                        key={hive.id}
+                        className="flex items-center justify-between py-3 transition hover:bg-slate-50/60 dark:hover:bg-slate-800/50 rounded-lg px-2"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400">
+                            <Hexagon className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                              {hive.hive_code}
+                            </p>
+                            <p className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                              <MapPin className="h-3 w-3 shrink-0" />
+                              {hive.location_region}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                              hive.status === "ACTIVE"
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60"
+                                : "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60"
+                            }`}
+                          >
+                            {hive.status}
+                          </span>
+                          <button
+                            onClick={() => router.push(`/telemetry?hive_id=${hive.id}`)}
+                            title="Inspect live telemetry"
+                            className="flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                          >
+                            <span>Telemetry</span>
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            {/* RIGHT COLUMN: Alerts & Batches (5 cols) */}
+            <div className="xl:col-span-5 space-y-6">
+              {/* SYSTEM ALERTS CARD */}
+              <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-3">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="h-4 w-4 text-red-500" />
+                    <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+                      Operational Alerts
+                    </h3>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${alertsCount > 0 ? "bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"}`}>
+                    {alertsCount} {alertsCount === 1 ? "Issue" : "Issues"}
+                  </span>
+                </div>
+
+                <div className="mt-3">
+                  {alertsCount === 0 ? (
+                    <div className="flex items-center gap-3 rounded-lg border border-emerald-200/80 bg-emerald-50/60 p-3.5 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      <p className="text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                        All hives operating within nominal thresholds.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {liveHives
+                        .filter((h) => h.status !== "ACTIVE")
+                        .map((hive) => (
+                          <button
+                            key={hive.id}
+                            onClick={() => router.push(`/risk?hive_id=${hive.id}`)}
+                            className="flex w-full items-center justify-between rounded-lg border border-red-200 bg-red-50/80 p-3 text-left transition hover:bg-red-100/60 dark:border-red-900/50 dark:bg-red-950/30 dark:hover:bg-red-900/50"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0" />
+                              <div>
+                                <p className="text-xs font-bold text-red-900 dark:text-red-200">
+                                  {hive.hive_code} Requires Review
+                                </p>
+                                <p className="text-[11px] text-red-700 dark:text-red-400">
+                                  Status: {hive.status} · {hive.location_region}
+                                </p>
+                              </div>
+                            </div>
+                            <ArrowRight className="h-3.5 w-3.5 text-red-500" />
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              {/* RECENT PROCESSING BATCHES */}
+              <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Factory className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+                      Recent Batches
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => router.push("/batches")}
+                    className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  >
+                    <span>View all</span>
+                    <ArrowRight className="h-3 w-3" />
+                  </button>
+                </div>
+
+                {loading && (
+                  <div className="flex items-center justify-center p-6 text-slate-400">
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    <span className="ml-2 text-xs">Loading batches...</span>
                   </div>
                 )}
 
                 {!loading && liveBatches.length === 0 && (
-                  <p className="mt-5 p-4 text-center text-sm text-slate-400">
-                    No processing batches recorded yet.
+                  <p className="p-6 text-center text-xs text-slate-400">
+                    No processing batches logged.
                   </p>
                 )}
 
                 {!loading && liveBatches.length > 0 && (
-                  <div className="mt-5 space-y-3">
+                  <div className="mt-3 divide-y divide-slate-100 dark:divide-slate-800/80">
                     {liveBatches.slice(0, 3).map((batch) => (
                       <button
                         key={batch.id}
-                        onClick={() => goTo("/batches")}
-                        className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-[#f9fbff] p-4 text-left hover:shadow-sm"
+                        onClick={() => router.push("/batches")}
+                        className="flex w-full items-center justify-between py-2.5 text-left transition hover:bg-slate-50/80 dark:hover:bg-slate-800/60 rounded px-1.5"
                       >
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50">
-                          <Package className="h-5 w-5 text-blue-600" />
-                        </div>
-
-                        <div className="flex-1">
-                          <p className="font-semibold text-[#092653]">
-                            {batch.batch_code}
-                          </p>
-
-                          <p className="mt-1 text-xs text-slate-500">
-                            Derived: {batch.derived_quantity_kg.toFixed(1)} kg
-                          </p>
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400">
+                            <Package className="h-3.5 w-3.5" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-900 dark:text-white leading-tight">
+                              {batch.batch_code}
+                            </p>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
+                              Quantity: {batch.derived_quantity_kg.toFixed(1)} kg
+                            </p>
+                          </div>
                         </div>
 
                         <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                          className={`rounded px-2 py-0.5 text-[10px] font-bold ${
                             batch.status === "ACTIVE"
-                              ? "bg-emerald-50 text-emerald-600"
-                              : batch.status === "HOLD"
-                              ? "bg-amber-50 text-amber-700"
-                              : "bg-red-50 text-red-600"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60"
+                              : "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60"
                           }`}
                         >
                           {batch.status}
@@ -587,59 +849,15 @@ export default function DashboardPage() {
                     ))}
                   </div>
                 )}
-              </div>
-            </section>
-
-            {/* TRACEABILITY WORKFLOW */}
-            <section className="group w-full rounded-2xl border border-slate-200/80 bg-white/90 p-6 text-left shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur-sm transition hover:-translate-y-0.5 hover:shadow-[0_12px_35px_rgba(245,158,11,0.14)]">
-              <div>
-                <h3 className="text-xl font-bold text-[#092653]">
-                  Traceability Workflow
-                </h3>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  Follow the complete honey traceability journey.
-                </p>
-              </div>
-
-              <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <WorkflowCard
-                  title="Hives"
-                  description="Registered hive sources"
-                  icon={Hexagon}
-                  path="/hives"
-                />
-
-                <WorkflowCard
-                  title="Telemetry"
-                  description="Temperature & humidity"
-                  icon={Radio}
-                  path="/telemetry"
-                />
-
-                <WorkflowCard
-                  title="Risk"
-                  description="Health risk assessment"
-                  icon={ShieldAlert}
-                  path="/risk"
-                />
-
-                <WorkflowCard
-                  title="Traceability"
-                  description="Harvest to batch lineage"
-                  icon={GitBranch}
-                  path="/dashboard/traceability"
-                />
-              </div>
-            </section>
-
-            {/* FOOTER */}
-            <div className="mt-8 flex items-center justify-center gap-2 text-xs text-slate-400">
-              <CheckCircle2 className="h-4 w-4" />
-              Honey Chain Traceability Platform
+              </section>
             </div>
-
           </div>
+
+          {/* FOOTER */}
+          <footer className="mt-8 flex items-center justify-center gap-2 border-t border-slate-200 dark:border-slate-800 pt-6 text-xs text-slate-400 dark:text-slate-500">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+            <span>Honey Chain Platform · Real-time cryptographic traceability & IoT monitoring</span>
+          </footer>
         </main>
       </div>
     </div>

@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #f7faff;
   --foreground: #172554;
+}
+
+.dark {
+  --background: #081124;
+  --foreground: #f8fafc;
 }
 
 * {
@@ -34,6 +41,27 @@ body {
       #fffaf0 45%,
       #f4f8ff 100%
     ) !important;
+}
+
+html.dark body {
+  background:
+    radial-gradient(
+      circle at 85% 10%,
+      rgba(245, 158, 11, 0.08),
+      transparent 35%
+    ),
+    radial-gradient(
+      circle at 10% 85%,
+      rgba(30, 58, 138, 0.15),
+      transparent 35%
+    ),
+    linear-gradient(
+      135deg,
+      #050c1b 0%,
+      #081226 50%,
+      #0a1630 100%
+    ) !important;
+  color: #f1f5f9;
 }
 
 /* Honey Chain Golden Glow */
