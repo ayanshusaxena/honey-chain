@@ -1,0 +1,9 @@
+# Scoped gitignore for AI/IoT simulator module
+.venv/
+env/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
