@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.security import create_access_token, hash_password
@@ -46,17 +46,83 @@ def _cleanup(database_session: Session) -> None:
                 pass
     _created_test_files = []
 
-    # Clean up database records
-    database_session.execute(delete(LabEvidence).where(LabEvidence.certificate_id.like(f"{TEST_CERT_PREFIX}%")))
-    database_session.execute(delete(AuditEvent).where(AuditEvent.entity_type == "LAB_EVIDENCE"))
-    database_session.execute(delete(BatchCollectionLot))
-    database_session.execute(delete(CollectionLotHarvest))
-    database_session.execute(delete(HiveHarvest))
-    database_session.execute(delete(Batch).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%")))
-    database_session.execute(delete(CollectionLot).where(CollectionLot.lot_code.like(f"{TEST_LOT_PREFIX}%")))
-    database_session.execute(delete(Harvest).where(Harvest.harvest_code.like(f"{TEST_HARVEST_PREFIX}%")))
-    database_session.execute(delete(Hive).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%")))
-    database_session.execute(delete(User).where(User.email.like(f"{TEST_EMAIL_PREFIX}%")))
+    # Clean up physical files scoped to test prefix in storage directory
+    if STORAGE_DIR.exists():
+        for item in STORAGE_DIR.glob(f"*{TEST_CERT_PREFIX}*"):
+            try:
+                item.unlink()
+            except OSError:
+                pass
+
+    # Discover test-owned entities by deterministic prefix
+    lab_ids = database_session.scalars(
+        select(LabEvidence.id).where(LabEvidence.certificate_id.like(f"{TEST_CERT_PREFIX}%"))
+    ).all()
+    batch_ids = database_session.scalars(
+        select(Batch.id).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%"))
+    ).all()
+    lot_ids = database_session.scalars(
+        select(CollectionLot.id).where(CollectionLot.lot_code.like(f"{TEST_LOT_PREFIX}%"))
+    ).all()
+    harvest_ids = database_session.scalars(
+        select(Harvest.id).where(Harvest.harvest_code.like(f"{TEST_HARVEST_PREFIX}%"))
+    ).all()
+    hive_ids = database_session.scalars(
+        select(Hive.id).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%"))
+    ).all()
+    user_ids = database_session.scalars(
+        select(User.id).where(User.email.like(f"{TEST_EMAIL_PREFIX}%"))
+    ).all()
+
+    # Clean up database records in strict foreign-key order
+    if lab_ids:
+        database_session.execute(delete(LabEvidence).where(LabEvidence.id.in_(lab_ids)))
+
+    # Scoped AuditEvents
+    audit_conditions = []
+    if user_ids:
+        audit_conditions.append(AuditEvent.actor_user_id.in_(user_ids))
+    entity_ids = set(lab_ids) | set(batch_ids) | set(lot_ids) | set(harvest_ids) | set(hive_ids)
+    if entity_ids:
+        audit_conditions.append(AuditEvent.entity_id.in_(list(entity_ids)))
+    if audit_conditions:
+        database_session.execute(delete(AuditEvent).where(or_(*audit_conditions)))
+
+    # Scoped child junction records
+    if batch_ids:
+        database_session.execute(
+            delete(BatchCollectionLot).where(BatchCollectionLot.batch_id.in_(batch_ids))
+        )
+    if lot_ids:
+        database_session.execute(
+            delete(BatchCollectionLot).where(BatchCollectionLot.collection_lot_id.in_(lot_ids))
+        )
+        database_session.execute(
+            delete(CollectionLotHarvest).where(CollectionLotHarvest.collection_lot_id.in_(lot_ids))
+        )
+    if harvest_ids:
+        database_session.execute(
+            delete(CollectionLotHarvest).where(CollectionLotHarvest.harvest_id.in_(harvest_ids))
+        )
+        database_session.execute(
+            delete(HiveHarvest).where(HiveHarvest.harvest_id.in_(harvest_ids))
+        )
+    if hive_ids:
+        database_session.execute(
+            delete(HiveHarvest).where(HiveHarvest.hive_id.in_(hive_ids))
+        )
+
+    # Scoped primary records
+    if batch_ids:
+        database_session.execute(delete(Batch).where(Batch.id.in_(batch_ids)))
+    if lot_ids:
+        database_session.execute(delete(CollectionLot).where(CollectionLot.id.in_(lot_ids)))
+    if harvest_ids:
+        database_session.execute(delete(Harvest).where(Harvest.id.in_(harvest_ids)))
+    if hive_ids:
+        database_session.execute(delete(Hive).where(Hive.id.in_(hive_ids)))
+    if user_ids:
+        database_session.execute(delete(User).where(User.id.in_(user_ids)))
     database_session.commit()
 
 
@@ -845,3 +911,78 @@ def test_zero_blockchain_interaction_in_lab_module() -> None:
         assert "add_evidence" not in content
         assert "linkPackaging" not in content
         assert "link_packaging" not in content
+
+
+def test_lab_evidence_cleanup_preserves_sentinel_data(session: Session) -> None:
+    """Validate that scoped cleanup does NOT delete unrelated sentinel lab evidence records."""
+    sentinel_user = User(
+        id=uuid4(),
+        name="Sentinel User",
+        email=f"sentinel-{uuid4().hex[:8]}@example.test",
+        password_hash=hash_password("SentinelPass123!"),
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    session.add(sentinel_user)
+    session.commit()
+
+    sentinel_batch = Batch(
+        id=uuid4(),
+        batch_code=f"SENTINEL-BAT-{uuid4().hex[:8]}",
+        status=BatchStatus.ACTIVE,
+        is_finalized=True,
+        finalized_at=datetime.now(UTC),
+        processor_id=sentinel_user.id,
+    )
+    session.add(sentinel_batch)
+    session.commit()
+
+    sentinel_evidence = LabEvidence(
+        id=uuid4(),
+        batch_id=sentinel_batch.id,
+        certificate_id=f"SENTINEL-CERT-{uuid4().hex[:8]}",
+        test_summary="Sentinel Lab Report",
+        file_name="sentinel.pdf",
+        file_path="uploads/lab_evidence/sentinel.pdf",
+        file_hash_sha256="a" * 64,
+        status=LabEvidenceStatus.ACTIVE,
+        uploaded_at=datetime.now(UTC),
+    )
+    session.add(sentinel_evidence)
+    session.commit()
+
+    sentinel_audit = AuditEvent(
+        id=uuid4(),
+        event_type="SENTINEL_EVENT",
+        entity_type="LAB_EVIDENCE",
+        entity_id=sentinel_evidence.id,
+        actor_user_id=sentinel_user.id,
+        timestamp=datetime.now(UTC),
+    )
+    session.add(sentinel_audit)
+    session.commit()
+
+    try:
+        _cleanup(session)
+
+        surviving_user = session.get(User, sentinel_user.id)
+        assert surviving_user is not None
+        assert surviving_user.id == sentinel_user.id
+
+        surviving_batch = session.get(Batch, sentinel_batch.id)
+        assert surviving_batch is not None
+        assert surviving_batch.id == sentinel_batch.id
+
+        surviving_evidence = session.get(LabEvidence, sentinel_evidence.id)
+        assert surviving_evidence is not None
+        assert surviving_evidence.id == sentinel_evidence.id
+
+        surviving_audit = session.get(AuditEvent, sentinel_audit.id)
+        assert surviving_audit is not None
+        assert surviving_audit.id == sentinel_audit.id
+    finally:
+        session.execute(delete(AuditEvent).where(AuditEvent.id == sentinel_audit.id))
+        session.execute(delete(LabEvidence).where(LabEvidence.id == sentinel_evidence.id))
+        session.execute(delete(Batch).where(Batch.id == sentinel_batch.id))
+        session.execute(delete(User).where(User.id == sentinel_user.id))
+        session.commit()

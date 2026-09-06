@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.security import create_access_token, hash_password
@@ -30,16 +30,67 @@ TEST_BATCH_PREFIX = "TRC-BAT-"
 
 
 def _cleanup(database_session: Session) -> None:
-    # Clean up child junction records first, then parent records
-    database_session.execute(delete(BatchCollectionLot))
-    database_session.execute(delete(CollectionLotHarvest))
-    database_session.execute(delete(HiveHarvest))
-    database_session.execute(delete(AuditEvent).where(AuditEvent.entity_type == "BATCH"))
-    database_session.execute(delete(Batch).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%")))
-    database_session.execute(delete(CollectionLot).where(CollectionLot.lot_code.like(f"{TEST_LOT_PREFIX}%")))
-    database_session.execute(delete(Harvest).where(Harvest.harvest_code.like(f"{TEST_HARVEST_PREFIX}%")))
-    database_session.execute(delete(Hive).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%")))
-    database_session.execute(delete(User).where(User.email.like(f"{TEST_EMAIL_PREFIX}%")))
+    batch_ids = database_session.scalars(
+        select(Batch.id).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%"))
+    ).all()
+    lot_ids = database_session.scalars(
+        select(CollectionLot.id).where(CollectionLot.lot_code.like(f"{TEST_LOT_PREFIX}%"))
+    ).all()
+    harvest_ids = database_session.scalars(
+        select(Harvest.id).where(Harvest.harvest_code.like(f"{TEST_HARVEST_PREFIX}%"))
+    ).all()
+    hive_ids = database_session.scalars(
+        select(Hive.id).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%"))
+    ).all()
+    user_ids = database_session.scalars(
+        select(User.id).where(User.email.like(f"{TEST_EMAIL_PREFIX}%"))
+    ).all()
+
+    # Clean up child junction records first, scoped strictly to test-owned IDs
+    if batch_ids:
+        database_session.execute(
+            delete(BatchCollectionLot).where(BatchCollectionLot.batch_id.in_(batch_ids))
+        )
+    if lot_ids:
+        database_session.execute(
+            delete(BatchCollectionLot).where(BatchCollectionLot.collection_lot_id.in_(lot_ids))
+        )
+        database_session.execute(
+            delete(CollectionLotHarvest).where(CollectionLotHarvest.collection_lot_id.in_(lot_ids))
+        )
+    if harvest_ids:
+        database_session.execute(
+            delete(CollectionLotHarvest).where(CollectionLotHarvest.harvest_id.in_(harvest_ids))
+        )
+        database_session.execute(
+            delete(HiveHarvest).where(HiveHarvest.harvest_id.in_(harvest_ids))
+        )
+    if hive_ids:
+        database_session.execute(
+            delete(HiveHarvest).where(HiveHarvest.hive_id.in_(hive_ids))
+        )
+
+    # Scoped AuditEvents
+    audit_conditions = []
+    if user_ids:
+        audit_conditions.append(AuditEvent.actor_user_id.in_(user_ids))
+    entity_ids = set(batch_ids) | set(lot_ids) | set(harvest_ids) | set(hive_ids)
+    if entity_ids:
+        audit_conditions.append(AuditEvent.entity_id.in_(list(entity_ids)))
+    if audit_conditions:
+        database_session.execute(delete(AuditEvent).where(or_(*audit_conditions)))
+
+    # Clean up primary entities
+    if batch_ids:
+        database_session.execute(delete(Batch).where(Batch.id.in_(batch_ids)))
+    if lot_ids:
+        database_session.execute(delete(CollectionLot).where(CollectionLot.id.in_(lot_ids)))
+    if harvest_ids:
+        database_session.execute(delete(Harvest).where(Harvest.id.in_(harvest_ids)))
+    if hive_ids:
+        database_session.execute(delete(Hive).where(Hive.id.in_(hive_ids)))
+    if user_ids:
+        database_session.execute(delete(User).where(User.id.in_(user_ids)))
     database_session.commit()
 
 
@@ -630,11 +681,16 @@ def test_full_lineage_and_cross_beekeeper_isolation(session: Session) -> None:
 
 
 def test_downstream_domain_isolation(session: Session) -> None:
-    # Ensure zero records created in downstream tables:
-    assert session.scalar(select(func.count()).select_from(LabEvidence)) == 0
-    assert session.scalar(select(func.count()).select_from(BlockchainRecord)) == 0
-    assert session.scalar(select(func.count()).select_from(PackagingLot)) == 0
-    assert session.scalar(select(func.count()).select_from(QrToken)) == 0
+    # Ensure zero records created in downstream tables for traceability entities:
+    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}pr-iso@example.test", role=UserRole.PROCESSOR)
+    client = TestClient(app)
+    res_b = client.post("/batches", headers=_auth_headers(processor), json={"batch_code": f"{TEST_BATCH_PREFIX}ISO"})
+    assert res_b.status_code == 201
+    batch_id = UUID(res_b.json()["id"])
+
+    assert session.scalar(select(func.count()).select_from(LabEvidence).where(LabEvidence.batch_id == batch_id)) == 0
+    assert session.scalar(select(func.count()).select_from(BlockchainRecord).where(BlockchainRecord.batch_id == batch_id)) == 0
+    assert session.scalar(select(func.count()).select_from(PackagingLot).where(PackagingLot.batch_id == batch_id)) == 0
 
 
 def test_beekeeper_cannot_view_or_mutate_another_beekeepers_harvest(session: Session) -> None:
@@ -855,3 +911,74 @@ def test_unfinalized_source_allocations_allowed_and_provenance_immutability(sess
     )
     assert res_fail_h.status_code == 422
     assert "Cannot add allocations to a finalized harvest" in res_fail_h.json()["detail"]
+
+
+def test_traceability_cleanup_preserves_sentinel_data(session: Session) -> None:
+    """Validate that scoped cleanup does NOT delete unrelated sentinel records."""
+    sentinel_user = User(
+        id=uuid4(),
+        name="Sentinel User",
+        email=f"sentinel-{uuid4().hex[:8]}@example.test",
+        password_hash=hash_password("SentinelPass123!"),
+        role=UserRole.BEEKEEPER,
+        is_active=True,
+    )
+    session.add(sentinel_user)
+    session.commit()
+
+    sentinel_hive = Hive(
+        id=uuid4(),
+        hive_code=f"SENTINEL-HIV-{uuid4().hex[:8]}",
+        beekeeper_id=sentinel_user.id,
+        location_region="Sentinel Test Region",
+        status=HiveStatus.ACTIVE,
+    )
+    session.add(sentinel_hive)
+    session.commit()
+
+    sentinel_harvest = Harvest(
+        id=uuid4(),
+        harvest_code=f"SENTINEL-HRV-{uuid4().hex[:8]}",
+        created_by_id=sentinel_user.id,
+        quantity_kg=50.0,
+        harvest_date=date(2026, 9, 1),
+        is_finalized=False,
+    )
+    session.add(sentinel_harvest)
+    session.commit()
+
+    sentinel_audit = AuditEvent(
+        id=uuid4(),
+        event_type="SENTINEL_EVENT",
+        entity_type="HARVEST",
+        entity_id=sentinel_harvest.id,
+        actor_user_id=sentinel_user.id,
+        timestamp=datetime.now(UTC),
+    )
+    session.add(sentinel_audit)
+    session.commit()
+
+    try:
+        _cleanup(session)
+
+        surviving_user = session.get(User, sentinel_user.id)
+        assert surviving_user is not None
+        assert surviving_user.id == sentinel_user.id
+
+        surviving_hive = session.get(Hive, sentinel_hive.id)
+        assert surviving_hive is not None
+        assert surviving_hive.id == sentinel_hive.id
+
+        surviving_harvest = session.get(Harvest, sentinel_harvest.id)
+        assert surviving_harvest is not None
+        assert surviving_harvest.id == sentinel_harvest.id
+
+        surviving_audit = session.get(AuditEvent, sentinel_audit.id)
+        assert surviving_audit is not None
+        assert surviving_audit.id == sentinel_audit.id
+    finally:
+        session.execute(delete(AuditEvent).where(AuditEvent.id == sentinel_audit.id))
+        session.execute(delete(Harvest).where(Harvest.id == sentinel_harvest.id))
+        session.execute(delete(Hive).where(Hive.id == sentinel_hive.id))
+        session.execute(delete(User).where(User.id == sentinel_user.id))
+        session.commit()

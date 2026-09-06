@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.security import create_access_token, hash_password
@@ -49,46 +49,115 @@ TEST_CERT_PREFIX = "QR-CERT-"
 
 
 def _cleanup(database_session: Session) -> None:
-    """Clean up test data across tables."""
-    # Delete QR tokens and PackagingLots
-    database_session.execute(delete(QrToken))
-    database_session.execute(
-        delete(PackagingLot).where(
+    """Clean up test data across tables, strictly scoped to test-owned IDs."""
+    pkg_ids = database_session.scalars(
+        select(PackagingLot.id).where(
             PackagingLot.package_lot_code.like(f"{TEST_PACKAGE_LOT_PREFIX}%")
         )
-    )
-    database_session.execute(
-        delete(LabEvidence).where(
+    ).all()
+    batch_ids = database_session.scalars(
+        select(Batch.id).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%"))
+    ).all()
+    lot_ids = database_session.scalars(
+        select(CollectionLot.id).where(CollectionLot.lot_code.like(f"{TEST_LOT_PREFIX}%"))
+    ).all()
+    harvest_ids = database_session.scalars(
+        select(Harvest.id).where(Harvest.harvest_code.like(f"{TEST_HARVEST_PREFIX}%"))
+    ).all()
+    hive_ids = database_session.scalars(
+        select(Hive.id).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%"))
+    ).all()
+    user_ids = database_session.scalars(
+        select(User.id).where(User.email.like(f"{TEST_EMAIL_PREFIX}%"))
+    ).all()
+    lab_ids = database_session.scalars(
+        select(LabEvidence.id).where(
             LabEvidence.certificate_id.like(f"{TEST_CERT_PREFIX}%")
         )
-    )
-    database_session.execute(delete(BlockchainRecord))
+    ).all()
 
-    user_ids = select(User.id).where(User.email.like(f"{TEST_EMAIL_PREFIX}%"))
-    database_session.execute(
-        delete(AuditEvent).where(AuditEvent.actor_user_id.in_(user_ids))
+    # Discover child entities strictly related to test entities
+    qr_ids = []
+    if pkg_ids:
+        qr_ids = database_session.scalars(
+            select(QrToken.id).where(QrToken.packaging_lot_id.in_(pkg_ids))
+        ).all()
+
+    bc_conditions = []
+    if batch_ids:
+        bc_conditions.append(BlockchainRecord.batch_id.in_(batch_ids))
+    if lab_ids:
+        bc_conditions.append(BlockchainRecord.lab_evidence_id.in_(lab_ids))
+    bc_ids = []
+    if bc_conditions:
+        bc_ids = database_session.scalars(
+            select(BlockchainRecord.id).where(or_(*bc_conditions))
+        ).all()
+
+    # Delete in strict foreign-key order:
+    if qr_ids:
+        database_session.execute(delete(QrToken).where(QrToken.id.in_(qr_ids)))
+    if pkg_ids:
+        database_session.execute(delete(PackagingLot).where(PackagingLot.id.in_(pkg_ids)))
+    if bc_ids:
+        database_session.execute(delete(BlockchainRecord).where(BlockchainRecord.id.in_(bc_ids)))
+    if lab_ids:
+        database_session.execute(delete(LabEvidence).where(LabEvidence.id.in_(lab_ids)))
+
+    # Scoped AuditEvents
+    audit_conditions = []
+    if user_ids:
+        audit_conditions.append(AuditEvent.actor_user_id.in_(user_ids))
+    entity_ids = (
+        set(qr_ids)
+        | set(pkg_ids)
+        | set(bc_ids)
+        | set(lab_ids)
+        | set(batch_ids)
+        | set(lot_ids)
+        | set(harvest_ids)
+        | set(hive_ids)
     )
-    database_session.execute(
-        delete(AuditEvent).where(AuditEvent.entity_type.in_(["QR_TOKEN", "PACKAGING_LOT", "LAB_EVIDENCE"]))
-    )
-    database_session.execute(delete(BatchCollectionLot))
-    database_session.execute(delete(CollectionLotHarvest))
-    database_session.execute(delete(HiveHarvest))
-    database_session.execute(
-        delete(Batch).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%"))
-    )
-    database_session.execute(
-        delete(CollectionLot).where(CollectionLot.lot_code.like(f"{TEST_LOT_PREFIX}%"))
-    )
-    database_session.execute(
-        delete(Harvest).where(Harvest.harvest_code.like(f"{TEST_HARVEST_PREFIX}%"))
-    )
-    database_session.execute(
-        delete(Hive).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%"))
-    )
-    database_session.execute(
-        delete(User).where(User.email.like(f"{TEST_EMAIL_PREFIX}%"))
-    )
+    if entity_ids:
+        audit_conditions.append(AuditEvent.entity_id.in_(list(entity_ids)))
+    if audit_conditions:
+        database_session.execute(delete(AuditEvent).where(or_(*audit_conditions)))
+
+    # Scoped child junction records
+    if batch_ids:
+        database_session.execute(
+            delete(BatchCollectionLot).where(BatchCollectionLot.batch_id.in_(batch_ids))
+        )
+    if lot_ids:
+        database_session.execute(
+            delete(BatchCollectionLot).where(BatchCollectionLot.collection_lot_id.in_(lot_ids))
+        )
+        database_session.execute(
+            delete(CollectionLotHarvest).where(CollectionLotHarvest.collection_lot_id.in_(lot_ids))
+        )
+    if harvest_ids:
+        database_session.execute(
+            delete(CollectionLotHarvest).where(CollectionLotHarvest.harvest_id.in_(harvest_ids))
+        )
+        database_session.execute(
+            delete(HiveHarvest).where(HiveHarvest.harvest_id.in_(harvest_ids))
+        )
+    if hive_ids:
+        database_session.execute(
+            delete(HiveHarvest).where(HiveHarvest.hive_id.in_(hive_ids))
+        )
+
+    # Scoped primary records
+    if batch_ids:
+        database_session.execute(delete(Batch).where(Batch.id.in_(batch_ids)))
+    if lot_ids:
+        database_session.execute(delete(CollectionLot).where(CollectionLot.id.in_(lot_ids)))
+    if harvest_ids:
+        database_session.execute(delete(Harvest).where(Harvest.id.in_(harvest_ids)))
+    if hive_ids:
+        database_session.execute(delete(Hive).where(Hive.id.in_(hive_ids)))
+    if user_ids:
+        database_session.execute(delete(User).where(User.id.in_(user_ids)))
     database_session.commit()
 
 
@@ -841,3 +910,89 @@ def test_no_blockchain_link_packaging_invoked() -> None:
         content = py_file.read_text(encoding="utf-8")
         assert "linkPackaging" not in content
         assert "link_packaging" not in content
+
+
+def test_qr_cleanup_preserves_sentinel_data(session: Session) -> None:
+    """Validate that scoped cleanup does NOT delete unrelated sentinel QR tokens."""
+    sentinel_user = User(
+        id=uuid4(),
+        name="Sentinel User",
+        email=f"sentinel-{uuid4().hex[:8]}@example.test",
+        password_hash=hash_password("SentinelPass123!"),
+        role=UserRole.PROCESSOR,
+        is_active=True,
+    )
+    session.add(sentinel_user)
+    session.commit()
+
+    sentinel_batch = Batch(
+        id=uuid4(),
+        batch_code=f"SENTINEL-BAT-{uuid4().hex[:8]}",
+        status=BatchStatus.ACTIVE,
+        is_finalized=True,
+        finalized_at=datetime.now(UTC),
+        processor_id=sentinel_user.id,
+    )
+    session.add(sentinel_batch)
+    session.commit()
+
+    sentinel_pkg = PackagingLot(
+        id=uuid4(),
+        batch_id=sentinel_batch.id,
+        package_lot_code=f"SENTINEL-PKG-{uuid4().hex[:8]}",
+        quantity=10,
+        unit=PackagingUnit.JARS,
+        package_size_grams=500.0,
+    )
+    session.add(sentinel_pkg)
+    session.commit()
+
+    sentinel_qr = QrToken(
+        id=uuid4(),
+        packaging_lot_id=sentinel_pkg.id,
+        token_hash=hashlib.sha256(uuid4().hex.encode()).hexdigest(),
+        status=QrStatus.ACTIVE,
+    )
+    session.add(sentinel_qr)
+    session.commit()
+
+    sentinel_audit = AuditEvent(
+        id=uuid4(),
+        event_type="SENTINEL_EVENT",
+        entity_type="QR_TOKEN",
+        entity_id=sentinel_qr.id,
+        actor_user_id=sentinel_user.id,
+        timestamp=datetime.now(UTC),
+    )
+    session.add(sentinel_audit)
+    session.commit()
+
+    try:
+        _cleanup(session)
+
+        surviving_user = session.get(User, sentinel_user.id)
+        assert surviving_user is not None
+        assert surviving_user.id == sentinel_user.id
+
+        surviving_batch = session.get(Batch, sentinel_batch.id)
+        assert surviving_batch is not None
+        assert surviving_batch.id == sentinel_batch.id
+
+        surviving_pkg = session.get(PackagingLot, sentinel_pkg.id)
+        assert surviving_pkg is not None
+        assert surviving_pkg.id == sentinel_pkg.id
+
+        surviving_qr = session.get(QrToken, sentinel_qr.id)
+        assert surviving_qr is not None
+        assert surviving_qr.id == sentinel_qr.id
+
+        surviving_audit = session.get(AuditEvent, sentinel_audit.id)
+        assert surviving_audit is not None
+        assert surviving_audit.id == sentinel_audit.id
+    finally:
+        session.execute(delete(AuditEvent).where(AuditEvent.id == sentinel_audit.id))
+        session.execute(delete(QrToken).where(QrToken.id == sentinel_qr.id))
+        session.execute(delete(PackagingLot).where(PackagingLot.id == sentinel_pkg.id))
+        session.execute(delete(Batch).where(Batch.id == sentinel_batch.id))
+        session.execute(delete(User).where(User.id == sentinel_user.id))
+        session.commit()

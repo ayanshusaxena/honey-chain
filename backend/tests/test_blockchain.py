@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 from hexbytes import HexBytes
 from pydantic import SecretStr
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 from web3.exceptions import ContractLogicError, TimeExhausted
 
@@ -46,11 +46,46 @@ TEST_CERT_PREFIX = "BC-CERT-"
 
 
 def _cleanup(database_session: Session) -> None:
-    database_session.execute(delete(AuditEvent).where(AuditEvent.entity_type == "BLOCKCHAIN_RECORD"))
-    database_session.execute(delete(BlockchainRecord))
-    database_session.execute(delete(LabEvidence).where(LabEvidence.certificate_id.like(f"{TEST_CERT_PREFIX}%")))
-    database_session.execute(delete(Batch).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%")))
-    database_session.execute(delete(User).where(User.email.like(f"{TEST_EMAIL_PREFIX}%")))
+    batch_ids = database_session.scalars(
+        select(Batch.id).where(Batch.batch_code.like(f"{TEST_BATCH_PREFIX}%"))
+    ).all()
+    user_ids = database_session.scalars(
+        select(User.id).where(User.email.like(f"{TEST_EMAIL_PREFIX}%"))
+    ).all()
+    lab_ids = database_session.scalars(
+        select(LabEvidence.id).where(LabEvidence.certificate_id.like(f"{TEST_CERT_PREFIX}%"))
+    ).all()
+
+    bc_conditions = []
+    if batch_ids:
+        bc_conditions.append(BlockchainRecord.batch_id.in_(batch_ids))
+    if lab_ids:
+        bc_conditions.append(BlockchainRecord.lab_evidence_id.in_(lab_ids))
+    bc_ids = []
+    if bc_conditions:
+        bc_ids = database_session.scalars(
+            select(BlockchainRecord.id).where(or_(*bc_conditions))
+        ).all()
+
+    if bc_ids:
+        database_session.execute(delete(BlockchainRecord).where(BlockchainRecord.id.in_(bc_ids)))
+
+    # Scoped AuditEvents
+    audit_conditions = []
+    if user_ids:
+        audit_conditions.append(AuditEvent.actor_user_id.in_(user_ids))
+    all_entity_ids = set(batch_ids) | set(lab_ids) | set(bc_ids)
+    if all_entity_ids:
+        audit_conditions.append(AuditEvent.entity_id.in_(list(all_entity_ids)))
+    if audit_conditions:
+        database_session.execute(delete(AuditEvent).where(or_(*audit_conditions)))
+
+    if lab_ids:
+        database_session.execute(delete(LabEvidence).where(LabEvidence.id.in_(lab_ids)))
+    if batch_ids:
+        database_session.execute(delete(Batch).where(Batch.id.in_(batch_ids)))
+    if user_ids:
+        database_session.execute(delete(User).where(User.id.in_(user_ids)))
     database_session.commit()
 
 
@@ -664,3 +699,76 @@ def test_ethereum_json_rpc_adapter_revert_and_timeout_error_handling() -> None:
     mock_func_call.build_transaction.side_effect = ContractLogicError("execution reverted: Batch already exists")
     with pytest.raises(BlockchainTransactionError, match="Contract execution simulated revert"):
         adapter.register_batch("BATCH-001")
+
+
+def test_blockchain_cleanup_preserves_sentinel_data(session: Session) -> None:
+    """Validate that scoped cleanup does NOT delete unrelated sentinel blockchain records."""
+    sentinel_user = User(
+        id=uuid4(),
+        name="Sentinel User",
+        email=f"sentinel-{uuid4().hex[:8]}@example.test",
+        password_hash=hash_password("SentinelPass123!"),
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    session.add(sentinel_user)
+    session.commit()
+
+    sentinel_batch = Batch(
+        id=uuid4(),
+        batch_code=f"SENTINEL-BAT-{uuid4().hex[:8]}",
+        status=BatchStatus.ACTIVE,
+        is_finalized=True,
+        finalized_at=datetime.now(UTC),
+        processor_id=sentinel_user.id,
+    )
+    session.add(sentinel_batch)
+    session.commit()
+
+    sentinel_record = BlockchainRecord(
+        id=uuid4(),
+        batch_id=sentinel_batch.id,
+        event_type="BATCH_FINALIZED",
+        status=BlockchainStatus.CONFIRMED,
+        network="hardhat",
+        transaction_hash=f"0x{uuid4().hex}{uuid4().hex}",
+        recorded_at=datetime.now(UTC),
+    )
+    session.add(sentinel_record)
+    session.commit()
+
+    sentinel_audit = AuditEvent(
+        id=uuid4(),
+        event_type="SENTINEL_EVENT",
+        entity_type="BLOCKCHAIN_RECORD",
+        entity_id=sentinel_record.id,
+        actor_user_id=sentinel_user.id,
+        timestamp=datetime.now(UTC),
+    )
+    session.add(sentinel_audit)
+    session.commit()
+
+    try:
+        _cleanup(session)
+
+        surviving_user = session.get(User, sentinel_user.id)
+        assert surviving_user is not None
+        assert surviving_user.id == sentinel_user.id
+
+        surviving_batch = session.get(Batch, sentinel_batch.id)
+        assert surviving_batch is not None
+        assert surviving_batch.id == sentinel_batch.id
+
+        surviving_record = session.get(BlockchainRecord, sentinel_record.id)
+        assert surviving_record is not None
+        assert surviving_record.id == sentinel_record.id
+
+        surviving_audit = session.get(AuditEvent, sentinel_audit.id)
+        assert surviving_audit is not None
+        assert surviving_audit.id == sentinel_audit.id
+    finally:
+        session.execute(delete(AuditEvent).where(AuditEvent.id == sentinel_audit.id))
+        session.execute(delete(BlockchainRecord).where(BlockchainRecord.id == sentinel_record.id))
+        session.execute(delete(Batch).where(Batch.id == sentinel_batch.id))
+        session.execute(delete(User).where(User.id == sentinel_user.id))
+        session.commit()
