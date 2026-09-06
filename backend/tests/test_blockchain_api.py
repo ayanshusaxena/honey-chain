@@ -264,7 +264,10 @@ def test_admin_can_invoke_blockchain_batch_and_evidence(
 
         # Check AuditEvents recorded admin as actor
         audits = session.scalars(
-            select(AuditEvent).where(AuditEvent.entity_type == "BLOCKCHAIN_RECORD")
+            select(AuditEvent).where(
+                AuditEvent.entity_type == "BLOCKCHAIN_RECORD",
+                AuditEvent.entity_id.in_([data_batch["id"], data_ev["id"]]),
+            )
         ).all()
         assert len(audits) == 2
         assert all(a.actor_user_id == admin.id for a in audits)

@@ -36,9 +36,11 @@ def session() -> Session:
 
 def _cleanup(database_session: Session) -> None:
     target_hive_ids = select(Hive.id).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%"))
+    target_user_ids = select(User.id).where(User.email.like(f"{TEST_EMAIL_PREFIX}%"))
     database_session.execute(delete(RiskEvent).where(RiskEvent.hive_id.in_(target_hive_ids)))
     database_session.execute(delete(Telemetry).where(Telemetry.hive_id.in_(target_hive_ids)))
     database_session.execute(delete(Hive).where(Hive.hive_code.like(f"{TEST_HIVE_PREFIX}%")))
+    database_session.execute(delete(Batch).where(Batch.processor_id.in_(target_user_ids)))
     database_session.execute(delete(User).where(User.email.like(f"{TEST_EMAIL_PREFIX}%")))
     database_session.commit()
 
@@ -439,8 +441,12 @@ def test_ai_risk_does_not_mutate_batch_status_or_create_blockchain_records(sessi
     assert reloaded_batch is not None
     assert reloaded_batch.status == BatchStatus.ACTIVE
 
-    # Verify zero blockchain records were created
-    bc_count = session.scalar(select(func.count()).select_from(BlockchainRecord))
+    # Verify zero blockchain records were created for this batch
+    bc_count = session.scalar(
+        select(func.count())
+        .select_from(BlockchainRecord)
+        .where(BlockchainRecord.batch_id == batch.id)
+    )
     assert bc_count == 0
 
     # Verify telemetry was NOT modified

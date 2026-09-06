@@ -19,6 +19,7 @@ from app.blockchain.config import (
     BlockchainError,
     BlockchainNotConfiguredError,
     BlockchainSettings,
+    BlockchainTransactionError,
 )
 from app.blockchain.schemas import (
     EMPTY_METADATA_HASH,
@@ -73,7 +74,7 @@ class BlockchainService:
                 batch_code=batch.batch_code,
                 metadata_hash=EMPTY_METADATA_HASH,
             )
-        except BlockchainClientError as exc:
+        except (BlockchainClientError, BlockchainTransactionError) as exc:
             # Record failed transaction attempt in PostgreSQL audit table
             failed_record = BlockchainRecord(
                 id=uuid4(),
@@ -93,6 +94,10 @@ class BlockchainService:
                 session.refresh(failed_record)
             except Exception:
                 session.rollback()
+            if isinstance(exc, BlockchainTransactionError):
+                raise BlockchainTransactionError(
+                    f"Failed to register batch '{batch.batch_code}' on-chain: {exc}"
+                ) from exc
             raise BlockchainClientError(
                 f"Failed to register batch '{batch.batch_code}' on-chain: {exc}"
             ) from exc
@@ -173,7 +178,7 @@ class BlockchainService:
                 batch_code=batch.batch_code,
                 evidence_hash=evidence_bytes32,
             )
-        except BlockchainClientError as exc:
+        except (BlockchainClientError, BlockchainTransactionError) as exc:
             failed_record = BlockchainRecord(
                 id=uuid4(),
                 batch_id=batch.id,
@@ -192,6 +197,10 @@ class BlockchainService:
                 session.refresh(failed_record)
             except Exception:
                 session.rollback()
+            if isinstance(exc, BlockchainTransactionError):
+                raise BlockchainTransactionError(
+                    f"Failed to record evidence '{evidence.certificate_id}' on-chain: {exc}"
+                ) from exc
             raise BlockchainClientError(
                 f"Failed to record evidence '{evidence.certificate_id}' on-chain: {exc}"
             ) from exc

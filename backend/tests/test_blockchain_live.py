@@ -343,3 +343,111 @@ def test_live_api_fastapi_to_ethereum_adapter_flow(
             db_session.commit()
     finally:
         app.dependency_overrides.pop(get_service, None)
+
+
+def test_live_duplicate_registration_revert_records_failed_status(
+    live_w3: Web3, contract_address: str
+) -> None:
+    """Verify that an on-chain contract revert (e.g. duplicate batch registration)
+    is caught by EthereumJsonRpcAdapter as BlockchainTransactionError,
+    persisted to PostgreSQL with BlockchainStatus.FAILED, and cleanly reported via API (502).
+    """
+    if SessionLocal is None:
+        pytest.skip("HONEY_CHAIN_DATABASE_URL is not configured.")
+
+    rpc_url = os.getenv("HONEY_CHAIN_BLOCKCHAIN_RPC_URL", DEFAULT_HARDHAT_RPC_URL)
+    priv_key = os.getenv("HONEY_CHAIN_BLOCKCHAIN_PRIVATE_KEY", DEFAULT_HARDHAT_PRIVATE_KEY)
+
+    settings = BlockchainSettings(
+        enabled=True,
+        rpc_url=rpc_url,
+        contract_address=contract_address,
+        chain_id=live_w3.eth.chain_id,
+        network_name="localhost",
+        private_key=SecretStr(priv_key),
+    )
+
+    live_service = BlockchainService(settings=settings)
+    app.dependency_overrides[get_service] = lambda: live_service
+
+    dup_batch_code = f"LIVE-DUP-{uuid4().hex[:8].upper()}"
+    test_email = f"test-dup-{uuid4().hex[:6]}@example.com"
+
+    try:
+        with SessionLocal() as db_session:
+            admin_user = User(
+                id=uuid4(),
+                name="Duplicate Test Admin",
+                email=test_email,
+                password_hash=hash_password("Secret123!"),
+                role=UserRole.ADMIN,
+                is_active=True,
+            )
+            db_session.add(admin_user)
+            db_session.commit()
+            db_session.refresh(admin_user)
+
+            batch = Batch(
+                id=uuid4(),
+                batch_code=dup_batch_code,
+                processor_id=admin_user.id,
+                status=BatchStatus.ACTIVE,
+                created_at=datetime.now(UTC),
+            )
+            db_session.add(batch)
+            db_session.commit()
+            db_session.refresh(batch)
+
+            token = create_access_token(subject=admin_user.id, role=admin_user.role)
+            headers = {"Authorization": f"Bearer {token}"}
+
+            with TestClient(app) as test_client:
+                # 1. First registration should succeed (201)
+                res1 = test_client.post(
+                    f"/batches/{batch.id}/blockchain-register",
+                    headers=headers,
+                )
+                assert res1.status_code == 201
+                body1 = res1.json()
+                assert body1["status"] == "CONFIRMED"
+
+                # 2. Second registration for identical batch_code must revert on EVM
+                # Solidity HoneyTraceability.sol: require(!batches[batchId].exists, "Batch already exists")
+                res2 = test_client.post(
+                    f"/batches/{batch.id}/blockchain-register",
+                    headers=headers,
+                )
+                assert res2.status_code == 502
+                body2 = res2.json()
+                assert "reverted" in body2["detail"].lower() or "failed" in body2["detail"].lower()
+
+                # 3. Verify PostgreSQL audit trail: should have 1 CONFIRMED and 1 FAILED record
+                records = db_session.scalars(
+                    select(BlockchainRecord)
+                    .where(BlockchainRecord.batch_id == batch.id)
+                    .order_by(BlockchainRecord.recorded_at.asc())
+                ).all()
+                assert len(records) == 2
+                assert records[0].status == BlockchainStatus.CONFIRMED
+                assert records[1].status == BlockchainStatus.FAILED
+                assert records[1].transaction_hash is None
+
+                # Clean up created records
+                record_ids = [r.id for r in records]
+                if record_ids:
+                    db_session.execute(
+                        delete(AuditEvent).where(
+                            AuditEvent.entity_type == "BLOCKCHAIN_RECORD",
+                            AuditEvent.entity_id.in_(record_ids),
+                        )
+                    )
+                    db_session.execute(
+                        delete(BlockchainRecord).where(
+                            BlockchainRecord.id.in_(record_ids)
+                        )
+                    )
+                db_session.execute(delete(Batch).where(Batch.id == batch.id))
+                db_session.execute(delete(User).where(User.id == admin_user.id))
+                db_session.commit()
+    finally:
+        app.dependency_overrides.pop(get_service, None)

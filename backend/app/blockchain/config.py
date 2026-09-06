@@ -19,7 +19,10 @@ class BlockchainSettings(BaseSettings):
     private_key: SecretStr | None = None
 
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file=(
+            Path(__file__).resolve().parents[2] / ".env",
+            Path(__file__).resolve().parents[3] / ".env",
+        ),
         env_prefix="HONEY_CHAIN_BLOCKCHAIN_",
         extra="ignore",
     )
