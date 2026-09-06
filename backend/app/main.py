@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.hives.router import router as hive_router
 from app.lab.router import router as lab_router
 from app.packaging.router import router as packaging_router
+from app.qr.router import router as qr_router
 from app.risk.router import router as risk_router
 from app.telemetry.router import router as telemetry_router
 from app.traceability.router import router as traceability_router
@@ -23,3 +24,4 @@ app.include_router(traceability_router)
 app.include_router(lab_router)
 app.include_router(blockchain_router)
 app.include_router(packaging_router)
+app.include_router(qr_router)

@@ -1,1 +1,5 @@
-"""QR verification domain; implementation will be added in a later chunk."""
+"""QR and consumer verification module."""
+
+from app.qr.router import router
+
+__all__ = ["router"]
