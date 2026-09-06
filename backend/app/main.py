@@ -6,6 +6,7 @@ from app.api.health import router as health_router
 from app.auth.router import router as auth_router
 from app.blockchain.router import router as blockchain_router
 from app.core.config import settings
+from app.demo.router import router as demo_router
 from app.hives.router import router as hive_router
 from app.lab.router import router as lab_router
 from app.packaging.router import router as packaging_router
@@ -25,3 +26,4 @@ app.include_router(lab_router)
 app.include_router(blockchain_router)
 app.include_router(packaging_router)
 app.include_router(qr_router)
+app.include_router(demo_router)

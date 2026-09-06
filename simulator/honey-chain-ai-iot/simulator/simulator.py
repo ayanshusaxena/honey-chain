@@ -31,7 +31,10 @@ HIVE_UUIDS = {
 MODEL_PATH = os.path.join(ROOT, "models", "isolation_forest.pkl")
 model = AnomalyModel()
 if os.path.exists(MODEL_PATH):
-    model.load(MODEL_PATH)
+    try:
+        model.load(MODEL_PATH)
+    except Exception:
+        pass
 
 def generate(hive_id, scenario=None, step=0, seed=DEFAULT_SEED, timestamp=None):
     """Generate deterministic simulated telemetry for a given hive, scenario, and step."""
