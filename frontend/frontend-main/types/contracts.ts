@@ -312,3 +312,20 @@ export interface LabEvidenceVerifyResponse {
   claim: string;
   claim_statement: string;
 }
+
+// ============================================================================
+// 9. Blockchain Domain
+// ============================================================================
+
+export interface BlockchainRecordResponse {
+  id: string; // UUID
+  batch_id: string; // UUID
+  lab_evidence_id: string | null; // UUID
+  event_type: string;
+  transaction_hash: string | null;
+  status: BlockchainStatus;
+  network: string;
+  contract_address: string | null;
+  block_number: number | null;
+  recorded_at: string; // ISO datetime
+}

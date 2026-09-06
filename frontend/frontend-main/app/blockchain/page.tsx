@@ -1,401 +1,394 @@
 "use client";
 
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Blocks,
   ShieldCheck,
-  Link2,
-  Clock3,
   Search,
   CheckCircle2,
-  Hash,
+  Loader2,
+  AlertCircle,
+  Copy,
+  Check,
+  Layers,
+  X,
 } from "lucide-react";
-import { useState } from "react";
-
-type BlockchainRecord = {
-  batchId: string;
-  status: "READY" | "PENDING";
-  network: string;
-  recordType: string;
-  createdAt: string;
-};
-
-const records: BlockchainRecord[] = [
-  {
-    batchId: "BATCH-2026-001",
-    status: "READY",
-    network: "Blockchain Network",
-    recordType: "Batch Traceability",
-    createdAt: "05 Sep 2026",
-  },
-  {
-    batchId: "BATCH-2026-002",
-    status: "READY",
-    network: "Blockchain Network",
-    recordType: "Batch Traceability",
-    createdAt: "04 Sep 2026",
-  },
-  {
-    batchId: "BATCH-2026-003",
-    status: "PENDING",
-    network: "Blockchain Network",
-    recordType: "Batch Traceability",
-    createdAt: "03 Sep 2026",
-  },
-];
+import { apiClient } from "../../lib/api-client";
+import { ApiError } from "../../lib/errors";
+import { useAppSession } from "../../lib/session-store";
+import { AppShell } from "../../components/layout/AppShell";
+import { AppHeader } from "../../components/layout/AppHeader";
+import { MetricCard } from "../../components/ui/MetricCard";
+import { StatusBadge } from "../../components/ui/StatusBadge";
+import { EmptyState } from "../../components/ui/EmptyState";
+import type {
+  BatchResponse,
+  BlockchainRecordResponse,
+} from "../../types/contracts";
 
 export default function BlockchainPage() {
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<BlockchainRecord | null>(null);
+  const session = useAppSession();
 
-  const filteredRecords = records.filter((item) =>
-    item.batchId.toLowerCase().includes(search.toLowerCase())
-  );
+  const [batches, setBatches] = useState<BatchResponse[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string>("");
+  const [records, setRecords] = useState<BlockchainRecordResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [registering, setRegistering] = useState(false);
+  const [copiedTx, setCopiedTx] = useState<string | null>(null);
+
+  // 1. Load Batches
+  useEffect(() => {
+    let active = true;
+    apiClient
+      .get<BatchResponse[]>("/batches")
+      .then((data) => {
+        if (!active) return;
+        const list = data || [];
+        setBatches(list);
+        if (list.length > 0) {
+          setSelectedBatchId(list[0].id);
+        } else {
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(err instanceof ApiError ? err.message : "Failed to load batches.");
+        setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // 2. Load Blockchain Records when selectedBatchId changes
+  useEffect(() => {
+    if (!selectedBatchId) return;
+    let active = true;
+    apiClient
+      .get<BlockchainRecordResponse[]>(`/batches/${selectedBatchId}/blockchain-records`)
+      .then((data) => {
+        if (!active) return;
+        setRecords(data || []);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(
+          err instanceof ApiError
+            ? err.message
+            : "Failed to load blockchain audit records."
+        );
+        setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedBatchId]);
+
+  const reloadData = useCallback(async () => {
+    if (!selectedBatchId) return;
+    try {
+      setError(null);
+      setLoading(true);
+      const data = await apiClient.get<BlockchainRecordResponse[]>(
+        `/batches/${selectedBatchId}/blockchain-records`
+      );
+      setRecords(data || []);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to load blockchain audit records."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedBatchId]);
+
+  const handleRegisterOnChain = async () => {
+    if (!selectedBatchId) return;
+    try {
+      setRegistering(true);
+      setError(null);
+      await apiClient.post<BlockchainRecordResponse>(
+        `/batches/${selectedBatchId}/blockchain-register`,
+        {}
+      );
+      await reloadData();
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to register batch on blockchain contract."
+      );
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedTx(id);
+    setTimeout(() => setCopiedTx(null), 2000);
+  };
+
+  const filteredRecords = useMemo(() => {
+    if (!searchQuery.trim()) return records;
+    const q = searchQuery.toLowerCase();
+    return records.filter(
+      (r) =>
+        r.event_type.toLowerCase().includes(q) ||
+        (r.transaction_hash && r.transaction_hash.toLowerCase().includes(q)) ||
+        r.network.toLowerCase().includes(q)
+    );
+  }, [records, searchQuery]);
+
+  const canRegister =
+    !session?.role || session.role === "ADMIN" || session.role === "PROCESSOR";
+
+  const selectedBatch = batches.find((b) => b.id === selectedBatchId);
+  const confirmedCount = records.filter((r) => r.status === "CONFIRMED").length;
 
   return (
-    <main className="min-h-screen bg-slate-50 p-5 sm:p-8">
-      <div className="mx-auto max-w-7xl">
-
+    <AppShell>
+      <div className="space-y-6">
         {/* Header */}
-        <div className="mb-8">
-          <p className="text-sm font-medium text-amber-600">
-            Honey Chain
-          </p>
-
-          <h1 className="mt-1 flex items-center gap-3 text-3xl font-bold text-slate-800">
-            <Blocks className="text-amber-500" size={30} />
-            Blockchain
-            <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-600">
-              GATED PROTOTYPE
-            </span>
-          </h1>
-
-          <p className="mt-1 text-sm text-slate-500">
-            Downstream blockchain anchoring interface (gated in current backend baseline).
-          </p>
-        </div>
-
-        {/* Info Banner */}
-        <div className="mb-7 flex gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-5">
-          <ShieldCheck
-            size={24}
-            className="mt-0.5 shrink-0 text-amber-600"
-          />
-
-          <div>
-            <h2 className="font-bold text-amber-800">
-              Gated Capability — Prototype Surface Only
-            </h2>
-
-            <p className="mt-1 text-sm leading-6 text-amber-700">
-              Blockchain anchoring and smart contract verification are downstream capabilities
-              gated in the current backend baseline. This view represents the prototype interface
-              design. Live on-chain transactions and hash notarization will be enabled in a future release.
-            </p>
-          </div>
-        </div>
-
-        {/* Summary */}
-        <div className="mb-7 grid gap-5 sm:grid-cols-3">
-
-          <SummaryCard
-            title="Total Records"
-            value="3"
-            icon={<Blocks size={22} />}
-          />
-
-          <SummaryCard
-            title="Ready for Verification"
-            value="2"
-            icon={<CheckCircle2 size={22} />}
-          />
-
-          <SummaryCard
-            title="Pending"
-            value="1"
-            icon={<Clock3 size={22} />}
-          />
-
-        </div>
-
-        {/* Search */}
-        <div className="mb-7 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="relative">
-
-            <Search
-              size={19}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-            />
-
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by Batch ID..."
-              className="w-full rounded-xl border border-slate-200 py-3 pl-11 pr-4 text-sm outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-            />
-
-          </div>
-        </div>
-
-        {/* Blockchain Records */}
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-
-          <div className="border-b border-slate-100 p-6">
-            <h2 className="text-lg font-bold text-slate-800">
-              Blockchain Records
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-400">
-              Batch records prepared for blockchain verification.
-            </p>
-          </div>
-
-          <div className="overflow-x-auto p-6">
-
-            <table className="w-full min-w-[850px]">
-
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wider text-slate-400">
-                  <th className="pb-4">Batch ID</th>
-                  <th className="pb-4">Record Type</th>
-                  <th className="pb-4">Network</th>
-                  <th className="pb-4">Created</th>
-                  <th className="pb-4">Status</th>
-                  <th className="pb-4">Action</th>
-                </tr>
-              </thead>
-
-              <tbody className="text-sm">
-
-                {filteredRecords.map((item) => (
-                  <tr
-                    key={item.batchId}
-                    className="border-b border-slate-50"
+        <AppHeader
+          title="Blockchain Ledger & Audit Trail"
+          breadcrumbs={[
+            { label: "Honey Chain", href: "/dashboard" },
+            { label: "Verification" },
+            { label: "Blockchain" },
+          ]}
+          session={session}
+          onRefresh={reloadData}
+          refreshing={loading}
+          actions={
+            <div className="flex items-center gap-2">
+              {batches.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="hidden text-xs font-semibold text-slate-500 sm:inline dark:text-slate-400">
+                    Target Batch:
+                  </span>
+                  <select
+                    value={selectedBatchId}
+                    onChange={(e) => setSelectedBatchId(e.target.value)}
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition focus:border-amber-500 focus:outline-none dark:border-slate-800 dark:bg-[#0c1527] dark:text-slate-200"
                   >
+                    {batches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.batch_code} ({b.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-                    <td className="py-4 font-bold text-slate-700">
-                      {item.batchId}
-                    </td>
-
-                    <td className="py-4 text-slate-500">
-                      {item.recordType}
-                    </td>
-
-                    <td className="py-4">
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <Link2 size={15} />
-                        {item.network}
-                      </div>
-                    </td>
-
-                    <td className="py-4 text-slate-500">
-                      {item.createdAt}
-                    </td>
-
-                    <td className="py-4">
-                      <StatusBadge status={item.status} />
-                    </td>
-
-                    <td className="py-4">
-
-                      <button
-                        onClick={() => setSelected(item)}
-                        className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"
-                      >
-                        <Search size={15} />
-                        View
-                      </button>
-
-                    </td>
-
-                  </tr>
-                ))}
-
-              </tbody>
-
-            </table>
-
-            {filteredRecords.length === 0 && (
-              <div className="py-12 text-center">
-
-                <Search
-                  size={30}
-                  className="mx-auto mb-3 text-slate-300"
-                />
-
-                <p className="font-semibold text-slate-600">
-                  No blockchain record found
-                </p>
-
-              </div>
-            )}
-
-          </div>
-        </div>
-
-        {/* Detail */}
-        {selected && (
-          <div className="mt-7 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
-            <div className="mb-6 flex items-center justify-between">
-
-              <div>
-                <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-600">
-                  <Blocks size={15} />
-                  Blockchain Record
-                </p>
-
-                <h2 className="mt-1 text-2xl font-bold text-slate-800">
-                  {selected.batchId}
-                </h2>
-              </div>
-
-              <button
-                onClick={() => setSelected(null)}
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"
-              >
-                ✕
-              </button>
-
+              {canRegister && (
+                <button
+                  onClick={handleRegisterOnChain}
+                  disabled={registering || !selectedBatchId}
+                  className="flex h-9 items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 text-xs font-bold text-white shadow-sm transition hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500/20 disabled:opacity-50"
+                >
+                  {registering ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Blocks className="h-4 w-4" />
+                  )}
+                  <span>Anchor Batch On-Chain</span>
+                </button>
+              )}
             </div>
+          }
+        />
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-
-              <DetailItem
-                label="Batch ID"
-                value={selected.batchId}
-              />
-
-              <DetailItem
-                label="Record Type"
-                value={selected.recordType}
-              />
-
-              <DetailItem
-                label="Network"
-                value={selected.network}
-              />
-
-              <DetailItem
-                label="Created"
-                value={selected.createdAt}
-              />
-
+        {/* Global Error Banner */}
+        {error && (
+          <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-xs font-medium text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
+              <span>{error}</span>
             </div>
-
-            <div className="mt-5 flex items-center gap-3 rounded-xl bg-slate-50 p-4">
-
-              <Hash size={20} className="text-slate-400" />
-
-              <div>
-                <p className="text-xs font-medium text-slate-400">
-                  Transaction Hash
-                </p>
-
-                <p className="mt-1 text-sm font-semibold text-slate-500">
-                  Will be provided by blockchain backend
-                </p>
-              </div>
-
-            </div>
-
-            <div className="mt-5 flex items-center gap-3">
-              <StatusBadge status={selected.status} />
-
-              <button
-                disabled
-                className="cursor-not-allowed rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-400"
-                title="Gated feature — will be enabled in downstream phase"
-              >
-                Verification Gated (Phase 3)
-              </button>
-            </div>
-
+            <button
+              onClick={() => setError(null)}
+              className="text-red-600 hover:text-red-800 dark:text-red-400"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
-      </div>
-    </main>
-  );
-}
-
-function SummaryCard({
-  title,
-  value,
-  icon,
-}: {
-  title: string;
-  value: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-
-      <div className="flex items-center justify-between">
-
-        <div>
-          <p className="text-sm font-medium text-slate-400">
-            {title}
-          </p>
-
-          <h3 className="mt-2 text-3xl font-bold text-slate-800">
-            {value}
-          </h3>
+        {/* Summary Metrics */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
+            title="ON-CHAIN RECORDS"
+            value={records.length}
+            icon={Layers}
+            subtitle="Immutable ledger entries"
+          />
+          <MetricCard
+            title="CONFIRMED TRANSACTIONS"
+            value={confirmedCount}
+            icon={CheckCircle2}
+            subtitle="Cryptographic consensus verified"
+          />
+          <MetricCard
+            title="SETTLEMENT NETWORK"
+            value="Polygon Amoy"
+            icon={Blocks}
+            subtitle="EVM Smart Contract Tier"
+          />
+          <MetricCard
+            title="ACTIVE BATCH TARGET"
+            value={selectedBatch?.batch_code || "None"}
+            icon={ShieldCheck}
+            subtitle={selectedBatch ? `Status: ${selectedBatch.status}` : "No batches available"}
+          />
         </div>
 
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-          {icon}
+        {/* Blockchain Ledger Table */}
+        <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-[#0c1527]">
+          <div className="flex flex-col gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                Cryptographic Ledger Transactions
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                On-chain proof of batch origin, processing transitions, and certified lab evidence hashes.
+              </p>
+            </div>
+
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Filter event or transaction..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-8.5 w-full rounded-lg border border-slate-200 bg-slate-50/50 pl-8.5 pr-3 text-xs text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200 dark:focus:bg-slate-900"
+              />
+            </div>
+          </div>
+
+          {loading && (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-amber-500" />
+              <span className="ml-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Querying on-chain records...
+              </span>
+            </div>
+          )}
+
+          {!loading && filteredRecords.length === 0 && records.length === 0 && (
+            <EmptyState
+              icon={Blocks}
+              title="No blockchain records found"
+              description={
+                selectedBatch
+                  ? `Batch ${selectedBatch.batch_code} has not yet been registered on-chain.`
+                  : "No batches exist in the registry."
+              }
+              actionLabel={canRegister && selectedBatch ? "Anchor Batch On-Chain" : undefined}
+              onAction={canRegister && selectedBatch ? handleRegisterOnChain : undefined}
+              className="py-12"
+            />
+          )}
+
+          {!loading && filteredRecords.length === 0 && records.length > 0 && (
+            <div className="p-8 text-center text-xs text-slate-500 dark:text-slate-400">
+              No blockchain records match &quot;{searchQuery}&quot;.
+            </div>
+          )}
+
+          {!loading && filteredRecords.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-slate-100 bg-slate-50/50 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-400">
+                  <tr>
+                    <th className="px-5 py-3">Event Type</th>
+                    <th className="px-5 py-3">Transaction Hash</th>
+                    <th className="px-5 py-3">Network</th>
+                    <th className="px-5 py-3">Block Number</th>
+                    <th className="px-5 py-3">Status</th>
+                    <th className="px-5 py-3">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredRecords.map((rec) => (
+                    <tr
+                      key={rec.id}
+                      className="transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/30"
+                    >
+                      <td className="px-5 py-3.5 font-bold text-slate-900 dark:text-white">
+                        <div className="flex items-center gap-2">
+                          <Blocks className="h-4 w-4 text-amber-500" />
+                          <span>{rec.event_type}</span>
+                        </div>
+                      </td>
+
+                      <td className="px-5 py-3.5">
+                        {rec.transaction_hash ? (
+                          <div className="flex items-center gap-1.5">
+                            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                              {rec.transaction_hash.slice(0, 10)}...{rec.transaction_hash.slice(-8)}
+                            </code>
+                            <button
+                              onClick={() => copyToClipboard(rec.transaction_hash!, rec.id)}
+                              title="Copy transaction hash"
+                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                            >
+                              {copiedTx === rec.id ? (
+                                <Check className="h-3.5 w-3.5 text-emerald-500" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="font-mono text-[10px] text-slate-400">Pending Mining</span>
+                        )}
+                      </td>
+
+                      <td className="px-5 py-3.5 text-slate-600 dark:text-slate-300">
+                        {rec.network}
+                      </td>
+
+                      <td className="px-5 py-3.5 font-mono text-slate-700 dark:text-slate-300">
+                        {rec.block_number ? `#${rec.block_number}` : "—"}
+                      </td>
+
+                      <td className="px-5 py-3.5">
+                        <StatusBadge
+                          status={
+                            rec.status === "CONFIRMED"
+                              ? "ACTIVE"
+                              : rec.status === "FAILED"
+                              ? "INACTIVE"
+                              : "STALE"
+                          }
+                        />
+                      </td>
+
+                      <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
+                        {new Date(rec.recorded_at).toLocaleDateString("en-GB", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-
       </div>
-
-    </div>
-  );
-}
-
-function StatusBadge({
-  status,
-}: {
-  status: BlockchainRecord["status"];
-}) {
-  const style =
-    status === "READY"
-      ? "bg-green-50 text-green-600"
-      : "bg-yellow-50 text-yellow-600";
-
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${style}`}
-    >
-      {status === "READY" ? (
-        <CheckCircle2 size={13} />
-      ) : (
-        <Clock3 size={13} />
-      )}
-
-      {status}
-    </span>
-  );
-}
-
-function DetailItem({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-xl bg-slate-50 p-4">
-
-      <p className="text-xs font-medium text-slate-400">
-        {label}
-      </p>
-
-      <p className="mt-1 break-words font-bold text-slate-700">
-        {value}
-      </p>
-
-    </div>
+    </AppShell>
   );
 }
