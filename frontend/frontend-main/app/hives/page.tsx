@@ -45,10 +45,26 @@ export default function HivesPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newHiveCode, setNewHiveCode] = useState("");
   const [newRegion, setNewRegion] = useState("");
+  const [selectedBeekeeperId, setSelectedBeekeeperId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
   const canAddHive = !session?.role || session.role === "ADMIN" || session.role === "BEEKEEPER";
+
+  // Available beekeepers derived from loaded hives data for ADMIN assignment
+  const availableBeekeepers = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; email: string }>();
+    for (const h of hives) {
+      if (h.beekeeper && h.beekeeper.id) {
+        map.set(h.beekeeper.id, {
+          id: h.beekeeper.id,
+          name: h.beekeeper.name || h.beekeeper.email,
+          email: h.beekeeper.email,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [hives]);
 
   const loadHives = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -95,16 +111,30 @@ export default function HivesPage() {
       return;
     }
 
+    const effectiveBeekeeperId = selectedBeekeeperId || availableBeekeepers[0]?.id;
+    if (session?.role === "ADMIN" && !effectiveBeekeeperId) {
+      setModalError("Beekeeper assignment is required when creating a hive as Administrator.");
+      return;
+    }
+
     try {
       setSubmitting(true);
       setModalError(null);
-      const created = await apiClient.post<HiveResponse>("/hives", {
+
+      const payload: { hive_code: string; location_region: string; beekeeper_id?: string } = {
         hive_code: newHiveCode.trim(),
         location_region: newRegion.trim(),
-      });
+      };
+
+      if (session?.role === "ADMIN" && effectiveBeekeeperId) {
+        payload.beekeeper_id = effectiveBeekeeperId;
+      }
+
+      const created = await apiClient.post<HiveResponse>("/hives", payload);
       setIsAddModalOpen(false);
       setNewHiveCode("");
       setNewRegion("");
+      setSelectedBeekeeperId("");
       await loadHives(false);
       setSelectedHive(created);
     } catch (err) {
@@ -525,6 +555,28 @@ export default function HivesPage() {
                     Geographic region or district where the apiary is situated.
                   </p>
                 </div>
+
+                {session?.role === "ADMIN" && (
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                      Assigned Beekeeper *
+                    </label>
+                    <select
+                      value={selectedBeekeeperId || (availableBeekeepers[0]?.id || "")}
+                      onChange={(e) => setSelectedBeekeeperId(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 outline-none transition focus:border-amber-400 focus:bg-white focus:ring-2 focus:ring-amber-500/10 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-amber-400 dark:focus:bg-slate-900"
+                    >
+                      {availableBeekeepers.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} ({b.email})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Administrators must assign a registered Beekeeper operator.
+                    </p>
+                  </div>
+                )}
 
                 <div className="mt-6 flex justify-end gap-2.5 pt-2">
                   <button
