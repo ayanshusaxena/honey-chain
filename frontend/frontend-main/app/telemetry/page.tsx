@@ -181,8 +181,6 @@ function TelemetryContent() {
             { label: "Operations" },
             { label: "Telemetry" },
           ]}
-          showBack={true}
-          backFallbackUrl="/dashboard"
           session={session}
           onRefresh={reloadData}
           refreshing={loadingReadings || loadingHives}

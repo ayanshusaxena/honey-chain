@@ -149,8 +149,6 @@ export default function HivesPage() {
             { label: "Operations" },
             { label: "Hives" },
           ]}
-          showBack={true}
-          backFallbackUrl="/dashboard"
           session={session}
           onRefresh={() => loadHives(true)}
           refreshing={loading}

@@ -61,7 +61,7 @@ function getRoleBadgeStyle(role: UserRole | null): string {
 export function AppHeader({
   title,
   breadcrumbs = [{ label: "Honey Chain" }, { label: "Operations" }],
-  showBack = true,
+  showBack = false,
   backFallbackUrl = "/dashboard",
   session,
   onRefresh,

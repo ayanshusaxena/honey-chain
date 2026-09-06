@@ -197,8 +197,6 @@ function RiskContent() {
             { label: "Operations" },
             { label: "Risk Assessment" },
           ]}
-          showBack={true}
-          backFallbackUrl="/dashboard"
           session={session}
           onRefresh={reloadData}
           refreshing={loadingRisk || loadingHives}
