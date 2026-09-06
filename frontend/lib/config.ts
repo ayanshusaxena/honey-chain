@@ -1,6 +1,6 @@
 /**
  * Honey Chain Frontend Configuration
- * 
+ *
  * Handles reading the backend API base URL from browser-accessible environment variables.
  * Never hardcodes hostnames, ports, or protocol schemes.
  */
@@ -35,4 +35,3 @@ export const API_CONFIG = {
     return getApiBaseUrl().length > 0;
   },
 } as const;
-

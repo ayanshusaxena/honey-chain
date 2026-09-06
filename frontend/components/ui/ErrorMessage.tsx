@@ -60,4 +60,3 @@ export function ErrorMessage({ error, onRetry, className = "" }: ErrorMessagePro
     </div>
   );
 }
-

@@ -1,6 +1,6 @@
 /**
  * Honey Chain Frontend Error Foundation
- * 
+ *
  * Preserves exact HTTP status codes and error payloads returned by the FastAPI backend.
  * Distinguishes authentication, authorization, not found, conflict, validation, and server errors.
  */
@@ -130,4 +130,3 @@ export class ApiError extends Error {
     return `HTTP ${this.status} ${this.statusText}`;
   }
 }
-

@@ -1,6 +1,6 @@
 /**
  * Honey Chain Auth Foundation Abstraction
- * 
+ *
  * Technical Authority: Sealed Backend Source (commit a4d794eafa56274308e500ec99ac3cd95322ab2c)
  * Contract: POST /auth/login (application/x-www-form-urlencoded: username, password)
  * Returns: TokenResponse { access_token: string, token_type: "bearer" }
@@ -179,5 +179,3 @@ export function handleUnauthorized(_path?: string): void {
 // Automatically register token provider and 401 handler on the shared API client
 apiClient.setTokenProvider(() => getAccessToken());
 apiClient.setOnUnauthorized((path) => handleUnauthorized(path));
-
-

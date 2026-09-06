@@ -1,6 +1,6 @@
 /**
  * Honey Chain Shared Contract Types
- * 
+ *
  * Technical Authority: Sealed Backend Source (commit a4d794eafa56274308e500ec99ac3cd95322ab2c)
  * Domain Coverage: Auth, Hives, Telemetry, Risk, Harvests, Collection Lots, Batches, Lab Evidence
  */

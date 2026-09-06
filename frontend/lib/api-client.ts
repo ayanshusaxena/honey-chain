@@ -1,6 +1,6 @@
 /**
  * Honey Chain Centralized API Client
- * 
+ *
  * Single generic API client wrapping native fetch with:
  * - Configurable base URL from environment
  * - Automatic Authorization header injection via token provider
@@ -234,4 +234,3 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient();
-
