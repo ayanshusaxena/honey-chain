@@ -10,12 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.core.database import get_db
-from app.lab.schemas import LabEvidenceResponse
+from app.lab.schemas import LabEvidenceResponse, LabEvidenceVerifyResponse
 from app.lab.service import (
     create_lab_evidence,
     download_lab_evidence_file,
     get_batch_lab_evidence,
     get_lab_evidence_by_id,
+    verify_lab_evidence_hash,
 )
 from app.models.identity import User
 
@@ -23,13 +24,13 @@ router = APIRouter(tags=["lab-evidence"])
 
 
 @router.post(
-    "/lab-evidence",
+    "/batches/{batch_id}/lab-evidence",
     response_model=LabEvidenceResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a lab evidence certificate for a processing batch",
 )
-def upload_lab_evidence(
-    batch_id: UUID = Form(...),
+def upload_batch_lab_evidence(
+    batch_id: UUID,
     certificate_id: str = Form(...),
     test_summary: str = Form(...),
     file: UploadFile = File(...),
@@ -67,42 +68,61 @@ def list_batch_lab_evidence(
 
 
 @router.get(
-    "/lab-evidence/{id}",
+    "/lab-evidence/{evidence_id}",
     response_model=LabEvidenceResponse,
     status_code=status.HTTP_200_OK,
     summary="Get a single lab evidence record by ID",
 )
 def get_lab_evidence(
-    id: UUID,
+    evidence_id: UUID,
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LabEvidenceResponse:
     """Retrieve metadata for a specific lab evidence record."""
     return get_lab_evidence_by_id(
         session=session,
-        evidence_id=id,
+        evidence_id=evidence_id,
         current_user=current_user,
     )
 
 
 @router.get(
-    "/lab-evidence/{id}/download",
+    "/lab-evidence/{evidence_id}/download",
     status_code=status.HTTP_200_OK,
     summary="Download the certificate PDF file for a lab evidence record",
 )
 def download_lab_evidence(
-    id: UUID,
+    evidence_id: UUID,
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> FileResponse:
     """Stream and download the physical PDF certificate file."""
     file_path, filename = download_lab_evidence_file(
         session=session,
-        evidence_id=id,
+        evidence_id=evidence_id,
         current_user=current_user,
     )
     return FileResponse(
         path=file_path,
         media_type="application/pdf",
         filename=filename,
+    )
+
+
+@router.get(
+    "/lab-evidence/{evidence_id}/verify",
+    response_model=LabEvidenceVerifyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Verify that physical evidence artifact on disk matches recorded SHA-256 hash",
+)
+def verify_lab_evidence(
+    evidence_id: UUID,
+    session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LabEvidenceVerifyResponse:
+    """Verify stored evidence file against recorded SHA-256 hash and return claim statement."""
+    return verify_lab_evidence_hash(
+        session=session,
+        evidence_id=evidence_id,
+        current_user=current_user,
     )

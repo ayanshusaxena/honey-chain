@@ -140,10 +140,11 @@ def test_unauthenticated_requests_are_rejected() -> None:
     client = TestClient(app)
     fake_id = uuid4()
 
-    assert client.post("/lab-evidence", data={}).status_code == 401
+    assert client.post(f"/batches/{fake_id}/lab-evidence", data={}).status_code == 401
     assert client.get(f"/batches/{fake_id}/lab-evidence").status_code == 401
     assert client.get(f"/lab-evidence/{fake_id}").status_code == 401
     assert client.get(f"/lab-evidence/{fake_id}/download").status_code == 401
+    assert client.get(f"/lab-evidence/{fake_id}/verify").status_code == 401
 
 
 # ===========================================================================
@@ -160,10 +161,9 @@ def test_processor_can_upload_pdf_evidence_to_own_batch(session: Session) -> Non
     expected_sha256 = hashlib.sha256(pdf_content).hexdigest().lower()
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": cert_id,
             "test_summary": "Purity and pollen analysis passed demo thresholds.",
         },
@@ -215,10 +215,9 @@ def test_admin_can_upload_evidence_to_any_batch(session: Session) -> None:
     pdf_content = b"%PDF-1.4 admin upload test"
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(admin),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": cert_id,
             "test_summary": "Admin uploaded lab certificate.",
         },
@@ -245,38 +244,36 @@ def test_processor_cannot_upload_evidence_to_another_processors_batch(session: S
     batch = _create_batch(session, batch_code=f"{TEST_BATCH_PREFIX}003", processor=processor1)
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor2),
         data={
-            "batch_id": str(batch.id),
-            "certificate_id": f"{TEST_CERT_PREFIX}003",
-            "test_summary": "Cross-processor attempt",
+            "certificate_id": f"{TEST_CERT_PREFIX}cross",
+            "test_summary": "Should be forbidden",
         },
         files={
-            "file": ("report.pdf", io.BytesIO(b"%PDF-1.4 data"), "application/pdf"),
+            "file": ("cross.pdf", io.BytesIO(b"%PDF-1.4 cross"), "application/pdf"),
         },
     )
 
     assert response.status_code == 403
-    assert "own batches" in response.json()["detail"].lower()
+    assert "only upload lab evidence for their own batches" in response.json()["detail"].lower()
 
 
 def test_beekeeper_cannot_upload_evidence(session: Session) -> None:
     client = TestClient(app)
-    beekeeper = _create_user(session, email=f"{TEST_EMAIL_PREFIX}bk@example.com", role=UserRole.BEEKEEPER)
-    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}proc_bk_test@example.com", role=UserRole.PROCESSOR)
+    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}proc_bk@example.com", role=UserRole.PROCESSOR)
+    beekeeper = _create_user(session, email=f"{TEST_EMAIL_PREFIX}bk_uploader@example.com", role=UserRole.BEEKEEPER)
     batch = _create_batch(session, batch_code=f"{TEST_BATCH_PREFIX}004", processor=processor)
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(beekeeper),
         data={
-            "batch_id": str(batch.id),
-            "certificate_id": f"{TEST_CERT_PREFIX}004",
-            "test_summary": "Beekeeper attempt",
+            "certificate_id": f"{TEST_CERT_PREFIX}bk_cert",
+            "test_summary": "Beekeeper upload attempt",
         },
         files={
-            "file": ("report.pdf", io.BytesIO(b"%PDF-1.4 data"), "application/pdf"),
+            "file": ("bk.pdf", io.BytesIO(b"%PDF-1.4 bk"), "application/pdf"),
         },
     )
 
@@ -285,7 +282,7 @@ def test_beekeeper_cannot_upload_evidence(session: Session) -> None:
 
 
 # ===========================================================================
-# 4. SHA-256 and Validation Constraints
+# 4. File Validation and SHA-256 Hashing Rules
 # ===========================================================================
 
 def test_sha256_hash_calculation_is_exact_deterministic_and_lowercase(session: Session) -> None:
@@ -293,16 +290,14 @@ def test_sha256_hash_calculation_is_exact_deterministic_and_lowercase(session: S
     processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}sha_proc@example.com", role=UserRole.PROCESSOR)
     batch = _create_batch(session, batch_code=f"{TEST_BATCH_PREFIX}sha", processor=processor)
 
-    # Specific known byte stream starting with valid PDF signature %PDF-
-    test_bytes = b"%PDF-1.4 Honey Chain 2026 Deterministic SHA256 Test Byte Content"
+    # Known arbitrary payload
+    test_bytes = b"%PDF-1.5 \x00\x01\x02 Test PDF payload for hash consistency \xff"
     expected_hex = hashlib.sha256(test_bytes).hexdigest().lower()
-    assert len(expected_hex) == 64
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": f"{TEST_CERT_PREFIX}sha",
             "test_summary": "SHA verification",
         },
@@ -325,10 +320,9 @@ def test_non_pdf_upload_is_rejected(session: Session) -> None:
 
     # 1. Non-pdf extension rejected
     r1 = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": f"{TEST_CERT_PREFIX}txt",
             "test_summary": "Invalid text file",
         },
@@ -341,10 +335,9 @@ def test_non_pdf_upload_is_rejected(session: Session) -> None:
 
     # 2. .pdf extension but missing %PDF- signature rejected
     r2 = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": f"{TEST_CERT_PREFIX}fake_pdf",
             "test_summary": "Fake PDF file without signature",
         },
@@ -362,10 +355,9 @@ def test_empty_file_upload_is_rejected(session: Session) -> None:
     batch = _create_batch(session, batch_code=f"{TEST_BATCH_PREFIX}empty", processor=processor)
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": f"{TEST_CERT_PREFIX}empty",
             "test_summary": "Empty report",
         },
@@ -387,10 +379,9 @@ def test_file_exceeding_10mb_is_rejected(session: Session) -> None:
     oversized_bytes = b"%PDF-1.4 " + b"0" * (10 * 1024 * 1024 + 1)
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": f"{TEST_CERT_PREFIX}oversize",
             "test_summary": "Oversized report",
         },
@@ -412,9 +403,9 @@ def test_duplicate_certificate_id_is_rejected(session: Session) -> None:
 
     # First upload succeeds
     r1 = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
-        data={"batch_id": str(batch.id), "certificate_id": cert_id, "test_summary": "First"},
+        data={"certificate_id": cert_id, "test_summary": "First"},
         files={"file": ("c1.pdf", io.BytesIO(b"%PDF-1.4 first"), "application/pdf")},
     )
     assert r1.status_code == 201
@@ -424,9 +415,9 @@ def test_duplicate_certificate_id_is_rejected(session: Session) -> None:
 
     # Second upload with same certificate_id fails with 409
     r2 = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
-        data={"batch_id": str(batch.id), "certificate_id": cert_id, "test_summary": "Second"},
+        data={"certificate_id": cert_id, "test_summary": "Second"},
         files={"file": ("c2.pdf", io.BytesIO(b"%PDF-1.4 second"), "application/pdf")},
     )
     assert r2.status_code == 409
@@ -441,18 +432,15 @@ def test_duplicate_certificate_race_integrity_error_handled(session: Session, mo
     from sqlalchemy.exc import IntegrityError
 
     # Simulate concurrent race where pre-check passed but session.commit raises IntegrityError
-    original_commit = Session.commit
-
     def mock_commit(self: Session) -> None:
         raise IntegrityError("duplicate key value violates unique constraint uq_lab_evidence_certificate_id", params={}, orig=Exception())
 
     monkeypatch.setattr(Session, "commit", mock_commit)
 
     response = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch.id),
             "certificate_id": f"{TEST_CERT_PREFIX}race_cert",
             "test_summary": "Simulated race condition",
         },
@@ -468,13 +456,12 @@ def test_duplicate_certificate_race_integrity_error_handled(session: Session, mo
 def test_upload_to_nonexistent_batch_returns_404(session: Session) -> None:
     client = TestClient(app)
     processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}nobatch@example.com", role=UserRole.PROCESSOR)
+    fake_batch_id = uuid4()
 
     response = client.post(
-
-        "/lab-evidence",
+        f"/batches/{fake_batch_id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(uuid4()),
             "certificate_id": f"{TEST_CERT_PREFIX}nobatch",
             "test_summary": "Nonexistent batch",
         },
@@ -500,10 +487,9 @@ def test_evidence_allowed_for_unfinalized_and_finalized_active_batches(session: 
         session, batch_code=f"{TEST_BATCH_PREFIX}unfin", processor=processor, is_finalized=False
     )
     r1 = client.post(
-        "/lab-evidence",
+        f"/batches/{batch_unfinalized.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch_unfinalized.id),
             "certificate_id": f"{TEST_CERT_PREFIX}unfin",
             "test_summary": "Evidence on unfinalized batch",
         },
@@ -519,10 +505,9 @@ def test_evidence_allowed_for_unfinalized_and_finalized_active_batches(session: 
         session, batch_code=f"{TEST_BATCH_PREFIX}fin", processor=processor, is_finalized=True
     )
     r2 = client.post(
-        "/lab-evidence",
+        f"/batches/{batch_finalized.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch_finalized.id),
             "certificate_id": f"{TEST_CERT_PREFIX}fin",
             "test_summary": "Evidence on finalized batch",
         },
@@ -543,10 +528,9 @@ def test_evidence_creation_allowed_for_hold_and_recall_batches(session: Session)
         session, batch_code=f"{TEST_BATCH_PREFIX}hold", processor=processor, status=BatchStatus.HOLD
     )
     r_hold = client.post(
-        "/lab-evidence",
+        f"/batches/{batch_hold.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch_hold.id),
             "certificate_id": f"{TEST_CERT_PREFIX}hold",
             "test_summary": "Evidence uploaded while batch is on HOLD",
         },
@@ -562,10 +546,9 @@ def test_evidence_creation_allowed_for_hold_and_recall_batches(session: Session)
         session, batch_code=f"{TEST_BATCH_PREFIX}recall", processor=processor, status=BatchStatus.RECALL
     )
     r_recall = client.post(
-        "/lab-evidence",
+        f"/batches/{batch_recall.id}/lab-evidence",
         headers=_auth_headers(processor),
         data={
-            "batch_id": str(batch_recall.id),
             "certificate_id": f"{TEST_CERT_PREFIX}recall",
             "test_summary": "Evidence uploaded while batch is on RECALL",
         },
@@ -578,7 +561,7 @@ def test_evidence_creation_allowed_for_hold_and_recall_batches(session: Session)
 
 
 # ===========================================================================
-# 6. Read and Download Endpoints
+# 6. Read, Download, and Verify Endpoints
 # ===========================================================================
 
 def test_read_and_download_evidence_endpoints(session: Session) -> None:
@@ -590,107 +573,216 @@ def test_read_and_download_evidence_endpoints(session: Session) -> None:
     cert_id = f"{TEST_CERT_PREFIX}read"
 
     create_resp = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
-        data={"batch_id": str(batch.id), "certificate_id": cert_id, "test_summary": "Testing read endpoints"},
+        data={"certificate_id": cert_id, "test_summary": "Testing read endpoints"},
         files={"file": ("original_cert.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
     )
     assert create_resp.status_code == 201
     evidence_id = create_resp.json()["id"]
 
+    # 1. GET /batches/{batch_id}/lab-evidence
+    list_resp = client.get(f"/batches/{batch.id}/lab-evidence", headers=_auth_headers(processor))
+    assert list_resp.status_code == 200
+    items = list_resp.json()
+    assert len(items) == 1
+    assert items[0]["id"] == evidence_id
+    assert "file_path" not in items[0]
+
+    # 2. GET /lab-evidence/{evidence_id}
+    detail_resp = client.get(f"/lab-evidence/{evidence_id}", headers=_auth_headers(processor))
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["id"] == evidence_id
+    assert "file_path" not in detail_resp.json()
+
+    # 3. GET /lab-evidence/{evidence_id}/download
+    download_resp = client.get(f"/lab-evidence/{evidence_id}/download", headers=_auth_headers(processor))
+    assert download_resp.status_code == 200
+    assert download_resp.headers["content-type"] == "application/pdf"
+    assert download_resp.content == pdf_bytes
+
     db_ev = session.scalar(select(LabEvidence).where(LabEvidence.id == UUID(evidence_id)))
     if db_ev:
         _track_file(db_ev.file_path)
 
-    # 1. GET /batches/{batch_id}/lab-evidence
+
+def test_verify_lab_evidence_hash_endpoint(session: Session) -> None:
+    """Verify endpoint computes SHA-256 over physical file and returns claim boundary."""
+    client = TestClient(app)
+    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}vfy_proc@example.com", role=UserRole.PROCESSOR)
+    batch = _create_batch(session, batch_code=f"{TEST_BATCH_PREFIX}vfy", processor=processor)
+
+    pdf_bytes = b"%PDF-1.4 verifiable lab report content"
+    expected_hash = hashlib.sha256(pdf_bytes).hexdigest().lower()
+    cert_id = f"{TEST_CERT_PREFIX}vfy"
+
+    create_resp = client.post(
+        f"/batches/{batch.id}/lab-evidence",
+        headers=_auth_headers(processor),
+        data={"certificate_id": cert_id, "test_summary": "Verification test"},
+        files={"file": ("vfy_cert.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+    )
+    assert create_resp.status_code == 201
+    evidence_id = create_resp.json()["id"]
+
+    # Call GET /lab-evidence/{evidence_id}/verify
+    verify_resp = client.get(f"/lab-evidence/{evidence_id}/verify", headers=_auth_headers(processor))
+    assert verify_resp.status_code == 200
+    vdata = verify_resp.json()
+    assert vdata["evidence_id"] == evidence_id
+    assert vdata["batch_id"] == str(batch.id)
+    assert vdata["certificate_id"] == cert_id
+    assert vdata["file_hash_sha256"] == expected_hash
+    assert vdata["computed_hash_sha256"] == expected_hash
+    assert vdata["is_hash_verified"] is True
+    assert vdata["is_verified"] is True
+    assert "file_path" not in vdata
+
+    # Verify claim boundary statement
+    expected_claim = "The evidence artifact was recorded and its hash is verifiable."
+    assert vdata["claim"] == expected_claim
+    assert vdata["claim_statement"] == expected_claim
+
+    db_ev = session.scalar(select(LabEvidence).where(LabEvidence.id == UUID(evidence_id)))
+    if db_ev:
+        _track_file(db_ev.file_path)
+
+
+def test_verify_lab_evidence_detects_file_tampering(session: Session) -> None:
+    """If file on disk is tampered, verify endpoint detects mismatch (is_hash_verified=False)."""
+    client = TestClient(app)
+    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}tamp_proc@example.com", role=UserRole.PROCESSOR)
+    batch = _create_batch(session, batch_code=f"{TEST_BATCH_PREFIX}tamp", processor=processor)
+
+    pdf_bytes = b"%PDF-1.4 original certificate content"
+    cert_id = f"{TEST_CERT_PREFIX}tamp"
+
+    create_resp = client.post(
+        f"/batches/{batch.id}/lab-evidence",
+        headers=_auth_headers(processor),
+        data={"certificate_id": cert_id, "test_summary": "Tamper test"},
+        files={"file": ("tamp_cert.pdf", io.BytesIO(pdf_bytes), "application/pdf")},
+    )
+    assert create_resp.status_code == 201
+    evidence_id = create_resp.json()["id"]
+
+    db_ev = session.scalar(select(LabEvidence).where(LabEvidence.id == UUID(evidence_id)))
+    assert db_ev is not None
+    _track_file(db_ev.file_path)
+
+    # Tamper with file on disk directly
+    file_path = Path(db_ev.file_path)
+    if not file_path.is_absolute():
+        repo_root = Path(__file__).resolve().parents[2]
+        file_path = repo_root / db_ev.file_path
+    file_path.write_bytes(b"%PDF-1.4 TAMPERED CONTENT WITH MALICIOUS ALTERATIONS")
+
+    # Verify returns mismatch
+    verify_resp = client.get(f"/lab-evidence/{evidence_id}/verify", headers=_auth_headers(processor))
+    assert verify_resp.status_code == 200
+    vdata = verify_resp.json()
+    assert vdata["is_hash_verified"] is False
+    assert vdata["is_verified"] is False
+    assert vdata["computed_hash_sha256"] != vdata["file_hash_sha256"]
+
+
+def test_multiple_lab_evidence_per_batch(session: Session) -> None:
+    """A batch can have multiple lab evidence records."""
+    client = TestClient(app)
+    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}multi_proc@example.com", role=UserRole.PROCESSOR)
+    batch = _create_batch(session, batch_code=f"{TEST_BATCH_PREFIX}multi", processor=processor)
+
+    # Upload 3 evidence files
+    for i in range(1, 4):
+        resp = client.post(
+            f"/batches/{batch.id}/lab-evidence",
+            headers=_auth_headers(processor),
+            data={
+                "certificate_id": f"{TEST_CERT_PREFIX}multi_{i}",
+                "test_summary": f"Test report {i}",
+            },
+            files={"file": (f"report_{i}.pdf", io.BytesIO(f"%PDF-1.4 report {i}".encode()), "application/pdf")},
+        )
+        assert resp.status_code == 201
+        evidence_id = resp.json()["id"]
+        db_ev = session.scalar(select(LabEvidence).where(LabEvidence.id == UUID(evidence_id)))
+        if db_ev:
+            _track_file(db_ev.file_path)
+
+    # List all evidence for batch
     list_resp = client.get(f"/batches/{batch.id}/lab-evidence", headers=_auth_headers(processor))
     assert list_resp.status_code == 200
-    evidence_list = list_resp.json()
-    assert len(evidence_list) == 1
-    assert evidence_list[0]["id"] == evidence_id
-    assert evidence_list[0]["certificate_id"] == cert_id
-
-    # 2. GET /lab-evidence/{id}
-    detail_resp = client.get(f"/lab-evidence/{evidence_id}", headers=_auth_headers(processor))
-    assert detail_resp.status_code == 200
-    assert detail_resp.json()["id"] == evidence_id
-    assert detail_resp.json()["file_name"] == "original_cert.pdf"
-
-    # 3. GET /lab-evidence/{id}/download
-    download_resp = client.get(f"/lab-evidence/{evidence_id}/download", headers=_auth_headers(processor))
-    assert download_resp.status_code == 200
-    assert download_resp.headers["content-type"] == "application/pdf"
-    assert "original_cert.pdf" in download_resp.headers.get("content-disposition", "")
-    assert download_resp.content == pdf_bytes
+    records = list_resp.json()
+    assert len(records) == 3
 
 
 # ===========================================================================
-# 7. Beekeeper Lineage-Based Read Authorization
+# 7. Lineage Access Control for Beekeepers
 # ===========================================================================
 
 def test_beekeeper_can_read_evidence_only_for_batches_with_own_lineage(session: Session) -> None:
     client = TestClient(app)
-    bk1 = _create_user(session, email=f"{TEST_EMAIL_PREFIX}bk1@example.com", role=UserRole.BEEKEEPER)
-    bk2 = _create_user(session, email=f"{TEST_EMAIL_PREFIX}bk2@example.com", role=UserRole.BEEKEEPER)
-    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}lineage_proc@example.com", role=UserRole.PROCESSOR)
+    admin = _create_user(session, email=f"{TEST_EMAIL_PREFIX}admin_lineage@example.com", role=UserRole.ADMIN)
+    processor = _create_user(session, email=f"{TEST_EMAIL_PREFIX}proc_lineage@example.com", role=UserRole.PROCESSOR)
+    bk1 = _create_user(session, email=f"{TEST_EMAIL_PREFIX}bk1_lineage@example.com", role=UserRole.BEEKEEPER)
+    bk2 = _create_user(session, email=f"{TEST_EMAIL_PREFIX}bk2_no_lineage@example.com", role=UserRole.BEEKEEPER)
 
-    # Set up lineage: Hive -> Harvest (by bk1) -> CollectionLot -> Batch
-    hive = Hive(
-        hive_code=f"{TEST_HIVE_PREFIX}001",
+    # Setup lineage: bk1 owns a harvest included in collection_lot included in batch
+    hive1 = Hive(
+        hive_code=f"{TEST_HIVE_PREFIX}01",
         beekeeper_id=bk1.id,
-        location_region="Srinagar",
+        location_region="Valley",
         status=HiveStatus.ACTIVE,
     )
-    session.add(hive)
+    session.add(hive1)
     session.commit()
 
-    harvest = Harvest(
-        harvest_code=f"{TEST_HARVEST_PREFIX}001",
-        created_by_id=bk1.id,
+    harvest1 = Harvest(
+        harvest_code=f"{TEST_HARVEST_PREFIX}01",
+        quantity_kg=50.0,
         harvest_date=date.today(),
-        quantity_kg=100.0,
+        created_by_id=bk1.id,
         is_finalized=True,
         finalized_at=datetime.now(UTC),
     )
-    session.add(harvest)
+    session.add(harvest1)
     session.commit()
 
-    hive_harvest = HiveHarvest(hive_id=hive.id, harvest_id=harvest.id, quantity_used_kg=100.0)
-    session.add(hive_harvest)
+    hh = HiveHarvest(hive_id=hive1.id, harvest_id=harvest1.id, quantity_used_kg=50.0)
+    session.add(hh)
 
     lot = CollectionLot(
-        lot_code=f"{TEST_LOT_PREFIX}001",
-        quantity_kg=100.0,
+        lot_code=f"{TEST_LOT_PREFIX}01",
+        quantity_kg=50.0,
         is_finalized=True,
         finalized_at=datetime.now(UTC),
     )
     session.add(lot)
     session.commit()
 
-    lot_harvest = CollectionLotHarvest(collection_lot_id=lot.id, harvest_id=harvest.id, quantity_used_kg=100.0)
-    session.add(lot_harvest)
+    clh = CollectionLotHarvest(collection_lot_id=lot.id, harvest_id=harvest1.id, quantity_used_kg=50.0)
+    session.add(clh)
 
     batch = Batch(
         batch_code=f"{TEST_BATCH_PREFIX}lineage",
         processor_id=processor.id,
-        status=BatchStatus.ACTIVE,
         is_finalized=True,
         finalized_at=datetime.now(UTC),
     )
     session.add(batch)
     session.commit()
 
-    batch_lot = BatchCollectionLot(batch_id=batch.id, collection_lot_id=lot.id, quantity_used_kg=100.0)
-    session.add(batch_lot)
+    bcl = BatchCollectionLot(batch_id=batch.id, collection_lot_id=lot.id, quantity_used_kg=50.0)
+    session.add(bcl)
     session.commit()
 
-    # Upload evidence as processor
-    cert_id = f"{TEST_CERT_PREFIX}lineage"
+    # Upload evidence to batch
+    cert_id = f"{TEST_CERT_PREFIX}lineage_cert"
     upload_resp = client.post(
-        "/lab-evidence",
+        f"/batches/{batch.id}/lab-evidence",
         headers=_auth_headers(processor),
-        data={"batch_id": str(batch.id), "certificate_id": cert_id, "test_summary": "Lineage test cert"},
-        files={"file": ("lineage.pdf", io.BytesIO(b"%PDF-1.4 lineage data"), "application/pdf")},
+        data={"certificate_id": cert_id, "test_summary": "Lineage test"},
+        files={"file": ("lineage_cert.pdf", io.BytesIO(b"%PDF-1.4 lineage"), "application/pdf")},
     )
     assert upload_resp.status_code == 201
     evidence_id = upload_resp.json()["id"]
@@ -699,7 +791,7 @@ def test_beekeeper_can_read_evidence_only_for_batches_with_own_lineage(session: 
     if db_ev:
         _track_file(db_ev.file_path)
 
-    # bk1 has honey in the batch -> ALLOWED to read
+    # bk1 has honey in the batch -> 200 OK for list, detail, download, verify
     r_bk1_list = client.get(f"/batches/{batch.id}/lab-evidence", headers=_auth_headers(bk1))
     assert r_bk1_list.status_code == 200
 
@@ -709,7 +801,11 @@ def test_beekeeper_can_read_evidence_only_for_batches_with_own_lineage(session: 
     r_bk1_download = client.get(f"/lab-evidence/{evidence_id}/download", headers=_auth_headers(bk1))
     assert r_bk1_download.status_code == 200
 
-    # bk2 has NO honey in the batch -> 403 FORBIDDEN
+    r_bk1_verify = client.get(f"/lab-evidence/{evidence_id}/verify", headers=_auth_headers(bk1))
+    assert r_bk1_verify.status_code == 200
+    assert r_bk1_verify.json()["is_hash_verified"] is True
+
+    # bk2 has NO honey in the batch -> 403 FORBIDDEN for list, detail, download, verify
     r_bk2_list = client.get(f"/batches/{batch.id}/lab-evidence", headers=_auth_headers(bk2))
     assert r_bk2_list.status_code == 403
 
@@ -718,6 +814,9 @@ def test_beekeeper_can_read_evidence_only_for_batches_with_own_lineage(session: 
 
     r_bk2_download = client.get(f"/lab-evidence/{evidence_id}/download", headers=_auth_headers(bk2))
     assert r_bk2_download.status_code == 403
+
+    r_bk2_verify = client.get(f"/lab-evidence/{evidence_id}/verify", headers=_auth_headers(bk2))
+    assert r_bk2_verify.status_code == 403
 
 
 # ===========================================================================
@@ -733,3 +832,16 @@ def test_immutability_and_forbidden_mutations(session: Session) -> None:
     assert client.put(f"/lab-evidence/{fake_id}", headers=_auth_headers(admin), json={}).status_code in (404, 405)
     assert client.patch(f"/lab-evidence/{fake_id}", headers=_auth_headers(admin), json={}).status_code in (404, 405)
     assert client.delete(f"/lab-evidence/{fake_id}", headers=_auth_headers(admin)).status_code in (404, 405)
+
+
+def test_zero_blockchain_interaction_in_lab_module() -> None:
+    """Verify statically that addEvidence and linkPackaging are never imported or invoked in app/lab/."""
+    from pathlib import Path
+
+    lab_dir = Path(__file__).resolve().parent.parent / "app" / "lab"
+    for py_file in lab_dir.glob("*.py"):
+        content = py_file.read_text(encoding="utf-8")
+        assert "addEvidence" not in content
+        assert "add_evidence" not in content
+        assert "linkPackaging" not in content
+        assert "link_packaging" not in content

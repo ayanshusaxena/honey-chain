@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from app.lab.schemas import LabEvidenceVerifyResponse
 from app.models.audit import AuditEvent
 from app.models.enums import LabEvidenceStatus, UserRole
 from app.models.evidence import LabEvidence
@@ -292,3 +293,42 @@ def download_lab_evidence_file(
         )
 
     return file_path, evidence.file_name
+
+
+def verify_lab_evidence_hash(
+    session: Session,
+    evidence_id: UUID,
+    current_user: User,
+) -> LabEvidenceVerifyResponse:
+    """Verify that physical evidence artifact on disk matches recorded SHA-256 hash."""
+    evidence = get_lab_evidence_by_id(session, evidence_id, current_user)
+
+    file_path = Path(evidence.file_path)
+    if not file_path.is_absolute():
+        repo_root = Path(__file__).resolve().parents[3]
+        file_path = repo_root / evidence.file_path
+
+    if not file_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Evidence file not found on disk",
+        )
+
+    file_bytes = file_path.read_bytes()
+    computed_hash = hashlib.sha256(file_bytes).hexdigest().lower()
+    is_valid = (computed_hash == evidence.file_hash_sha256)
+
+    return LabEvidenceVerifyResponse(
+        id=evidence.id,
+        evidence_id=evidence.id,
+        batch_id=evidence.batch_id,
+        certificate_id=evidence.certificate_id,
+        file_name=evidence.file_name,
+        file_hash_sha256=evidence.file_hash_sha256,
+        computed_hash_sha256=computed_hash,
+        is_hash_verified=is_valid,
+        is_verified=is_valid,
+        status=evidence.status,
+        claim="The evidence artifact was recorded and its hash is verifiable.",
+        claim_statement="The evidence artifact was recorded and its hash is verifiable.",
+    )
