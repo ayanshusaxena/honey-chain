@@ -10,6 +10,10 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# Runtime uploads & evidence artifacts
+backend/uploads/
+uploads/
+
 # macOS
 .DS_Store
 
