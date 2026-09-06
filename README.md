@@ -1,4 +1,4 @@
-﻿# Honey Chain (SIH 2026 - PS 26021)
+# Honey Chain (SIH 2026 - PS 26021)
 > End-to-End Honey Supply Chain Traceability, Quality Verification, and Consumer Trust Platform
 
 Honey Chain is an open-source prototype platform designed for Smart India Hackathon 2026 (Problem Statement 26021). It establishes a transparent, tamper-evident custody chain for raw honey from beekeeper hives to retail packaging, combining IoT telemetry anomaly screening, cryptographic lab evidence verification, dual off-chain/on-chain audit trails, and single-use consumer QR verification.
@@ -96,7 +96,7 @@ CREATE DATABASE honey_chain OWNER honey_chain_app;
    ```env
    HONEY_CHAIN_DATABASE_URL=postgresql+psycopg://honey_chain_app:your_secure_password@localhost:5432/honey_chain
    HONEY_CHAIN_JWT_SECRET=your-secure-random-jwt-secret-at-least-32-chars-long
-   HONEY_CHAIN_DEMO_PASSWORD=DemoSecret123!
+   HONEY_CHAIN_DEMO_PASSWORD=your_secure_demo_password
    HONEY_CHAIN_PUBLIC_ORIGIN=http://localhost:8000
    ```
 4. Run database migrations:
@@ -135,8 +135,9 @@ To enable real on-chain transaction execution and audit verification:
    HONEY_CHAIN_BLOCKCHAIN_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
    HONEY_CHAIN_BLOCKCHAIN_CHAIN_ID=31337
    HONEY_CHAIN_BLOCKCHAIN_NETWORK_NAME=localhost
-   HONEY_CHAIN_BLOCKCHAIN_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+   HONEY_CHAIN_BLOCKCHAIN_PRIVATE_KEY=<local-hardhat-account-private-key>
    ```
+   *(Note: Set `HONEY_CHAIN_BLOCKCHAIN_PRIVATE_KEY` to one of the development private keys output by `npx hardhat node`, such as Account #0).*
 
 ---
 
