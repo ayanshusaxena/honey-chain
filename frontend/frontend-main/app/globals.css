@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7faff;
+  --foreground: #172554;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(
+      circle at 85% 10%,
+      rgba(255, 193, 7, 0.38),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 10% 85%,
+      rgba(245, 158, 11, 0.28),
+      transparent 32%
+    ),
+    linear-gradient(
+      135deg,
+      #fff8dc 0%,
+      #fffaf0 45%,
+      #f4f8ff 100%
+    ) !important;
+}
+
+/* Honey Chain Golden Glow */
+
+body::before {
+  content: "";
+  position: fixed;
+  width: 420px;
+  height: 420px;
+  right: -120px;
+  top: 80px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 193, 7, 0.22) 0%,
+    rgba(245, 158, 11, 0.10) 35%,
+    transparent 70%
+  );
+  filter: blur(35px);
+  pointer-events: none;
+  z-index: -1;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  width: 350px;
+  height: 350px;
+  left: -130px;
+  bottom: -80px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(245, 158, 11, 0.18) 0%,
+    transparent 70%
+  );
+  filter: blur(40px);
+  pointer-events: none;
+  z-index: -1;
+}
