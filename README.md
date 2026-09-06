@@ -1,7 +1,7 @@
 # Honey Chain (SIH 2026 - PS 26021)
 > End-to-End Honey Supply Chain Traceability, Quality Verification, and Consumer Trust Platform
 
-Honey Chain is an open-source prototype platform designed for Smart India Hackathon 2026 (Problem Statement 26021). It establishes a transparent, tamper-evident custody chain for raw honey from beekeeper hives to retail packaging, combining IoT telemetry anomaly screening, cryptographic lab evidence verification, dual off-chain/on-chain audit trails, and single-use consumer QR verification.
+Honey Chain is an open-source prototype platform designed for Smart India Hackathon 2026 (Problem Statement 26021). It establishes a transparent, tamper-evident custody chain for raw honey from beekeeper hives to retail packaging, combining IoT telemetry anomaly screening, cryptographic lab evidence verification, dual off-chain/on-chain audit trails, and unique, hash-only consumer QR verification with dynamic status updates.
 
 ---
 
@@ -20,7 +20,7 @@ Honey Chain separates operational business workflows from cryptographic proof no
                                       |                               |
                                       v                               v
                              [ Lab Evidence PDF ]         [ Blockchain Notary ]
-                             (SHA-256 Checksum)          (HoneyTraceability.sol)
+                             (SHA-256 Digest)            (HoneyTraceability.sol)
                                       |                               |
                                       +---------------+---------------+
                                                       |
@@ -28,7 +28,7 @@ Honey Chain separates operational business workflows from cryptographic proof no
                                              [ Packaging Lot ]
                                                       |
                                                       v
-                                            [ Single-Use QR Token ]
+                                            [ Unique QR Token ]
                                                       |
                                                       v
                                          [ Consumer Verification ]
@@ -37,15 +37,20 @@ Honey Chain separates operational business workflows from cryptographic proof no
 
 1. **PostgreSQL as Operational Source of Truth**:
    - Serves all transactional business logic, relational mappings, and operational state.
-   - Enforces strict foreign-key integrity, multi-stage volume conservation (preventing oversubscription), row-level concurrency locking (`FOR UPDATE`), and role-based access control.
+   - Enforces strict foreign-key integrity, multi-stage volume conservation (preventing oversubscription), row-level concurrency locking (`FOR UPDATE`), and role-based access control (`ADMIN`, `BEEKEEPER`, `PROCESSOR`).
 2. **FastAPI Backend Service**:
    - Python-based asynchronous REST API with structured domain layering (Auth, Hives, Telemetry, Risk, Traceability, Lab Evidence, Packaging, QR, Blockchain).
-   - JWT bearer authentication with role-based permissions: `ADMIN`, `BEEKEEPER`, `PROCESSOR`.
-   - Immutable audit log (`audit_events`) tracking authenticated actor UUIDs across all lifecycle events.
+   - JWT bearer authentication with role-based permissions.
+   - Immutable audit log (`audit_events`) tracking authenticated actor UUIDs across all operational lifecycle events.
 3. **Blockchain as Immutable Notary & Evidence Layer**:
-   - Ethereum JSON-RPC adapter interfacing with local EVM runtime (`HoneyTraceability.sol` on Hardhat).
-   - Records cryptographic proofs: on-chain batch identity (`registerBatch`) and exact 32-byte SHA-256 digests of verified lab reports (`addEvidence`).
+   - Ethereum JSON-RPC adapter interfacing with a local EVM runtime (`HoneyTraceability.sol` on Hardhat).
+   - Records cryptographic proofs: on-chain batch identity (`registerBatch`) and exact 32-byte SHA-256 digests of verified digital lab reports (`addEvidence`).
+   - Functions strictly as an append-only evidence witness and receipt log; does **not** replace PostgreSQL as the operational source of truth, nor does it automate business logic or governance.
    - Off-chain operations proceed cleanly when blockchain is disabled; when enabled, on-chain transactions provide independent third-party verification receipts.
+4. **Rule-Based Risk Screening Engine**:
+   - Evaluates incoming IoT hive telemetry against deterministic agronomic thresholds (temperature, humidity, weight changes).
+   - Operates strictly as a prototype risk observation/anomaly screening tool; does **not** provide clinical veterinary, disease, or biological diagnosis.
+   - Does **not** possess authority to transition batch business statuses; all administrative HOLD and RECALL actions require explicit intervention by an authorized `ADMIN`.
 
 ---
 
@@ -160,7 +165,7 @@ cd backend
 The project includes an end-to-end demo bootstrap utility that creates a complete, verified honey journey without manual data entry.
 
 ### A. Run Demo Bootstrap (Off-Chain Mode)
-Seeds demo users, creates a hive, telemetry, risk assessment, harvest, collection lot, batch, lab evidence PDF, packaging lot, and single-use QR token:
+Seeds demo users, creates a hive, telemetry, risk assessment, harvest, collection lot, batch, lab evidence PDF, packaging lot, and unique hash-only QR token:
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m app.demo.bootstrap
@@ -199,16 +204,26 @@ OPERATOR DEMO VERIFICATION URL (EPHEMERAL RAW TOKEN):
 
 ---
 
-## 7. QR Token Generation & Consumer Verification
+## 7. Packaging QR Generation & Public Consumer Verification
 
-### Security & Privacy Design
-- **Hash-Only Storage**: PostgreSQL table `qr_tokens` stores only `token_hash = sha256(raw_token)`. The 256-bit raw token is never written to disk or the database.
-- **Single-Use Verification**: Designed for tamper detection; token lifecycle is strictly tracked.
-- **Consumer Verification Endpoint**: `GET /verify/{token}`
-  - Unauthenticated public endpoint returning a public-safe DTO.
-  - Exposes batch identity, packaging details, Kashmir Valley hive origin, verified lab report parameters, and blockchain transaction receipts.
-  - Zero exposure of internal user IDs, phone numbers, email addresses, or database primary keys.
-  - Dynamic status warning: Displays `VERIFIED` for active batches, dynamic warning for administrative `HOLD`, and urgent recall notice for `RECALL`.
+### Security & Token Lifecycle Design
+- **Single-Issuance per Packaging Lot**: Exactly one QR token can be generated per retail packaging lot (enforced by a database `unique` constraint on `packaging_lot_id`). Attempting to issue a second token for the same lot raises HTTP `409 Conflict`.
+- **Hash-Only Persistence**: The 256-bit cryptographically secure raw token (`secrets.token_hex(32)`) is delivered once to the packaging operator upon creation and is **never** stored in plaintext in the database or on disk. Only its cryptographic SHA-256 digest (`token_hash`) is persisted in `qr_tokens`.
+- **Reusable, Idempotent Verification**: The consumer verification endpoint `GET /verify/{raw_token}` is an idempotent read operation. It does **not** burn or consume the token on first scan, allowing consumers, retailers, and auditors to verify product authenticity at any point throughout the product's shelf life.
+- **Dynamic Batch Lifecycle Reflection**: Verification resolves the live batch status dynamically in real time:
+  - `ACTIVE` → Displays status `VERIFIED` with complete provenance, lab evidence, and blockchain notary receipts.
+  - `HOLD` → Displays status `HOLD` with alert warning: *"Notice: This honey batch is currently on administrative HOLD. Distribution is temporarily paused."*
+  - `RECALL` → Displays status `RECALLED` with critical alert: *"WARNING: This honey batch has been RECALLED. Do not consume this product."*
+- **Administrative Revocation**: Authorized administrators can permanently invalidate a compromised or damaged token via `POST /qr/{qr_id}/revoke`. Revoked tokens return HTTP `410 Gone`.
+- **Physical Label Tamper Boundary**: While cryptographic tokens prevent digital forgery and database breach exploitation, software-level QR codes cannot physically prevent bad actors from copying or re-printing physical labels in an unmonitored retail environment.
+
+### Batch Lifecycle & Administrative Governance
+Batch status transitions follow a strict administrative state machine:
+- `ACTIVE` → `HOLD` → `ACTIVE` is permitted (e.g. pending quality audits or cleared investigations).
+- `ACTIVE` → `RECALL` is permitted.
+- `RECALL` is **strictly terminal** and cannot be transitioned back to `ACTIVE` or `HOLD`.
+- Status transitions are restricted exclusively to authenticated `ADMIN` users (`PATCH /batches/{batch_id}/status`).
+- Neither the AI/risk evaluation engine nor the blockchain smart contract has authority to change operational batch states.
 
 ---
 
@@ -239,10 +254,11 @@ cd backend
 ## 9. Demo Data Disclaimer & Scope Boundaries
 
 ### Synthetic Data Notice
-All data created by the demo bootstrap (`DEMO-*` codes, simulated temperatures/weights, Kashmiri Acacia honey purity reports, and C4 screening values) are purely synthetic demonstration fixtures for SIH 2026 PS 26021. They do NOT represent real-world commercial lab certificates, biological diagnostics, or registered agricultural facilities.
+All data created by the demo bootstrap (`DEMO-*` codes, simulated temperatures/weights, Kashmiri Acacia honey purity parameters, and C4 screening values) are purely synthetic demonstration fixtures created solely for SIH 2026 PS 26021. They do NOT represent real-world commercial lab certificates, biological diagnostics, or registered agricultural facilities.
 
 ### MVP Scope & Known Limitations
-- **EVM Runtime**: Designed and validated against local Hardhat nodes. Not deployed to public Ethereum mainnets or testnets.
-- **Risk Evaluation Engine**: Uses deterministic prototype threshold rules for demonstration; does not constitute a clinical veterinary or disease diagnostic tool.
-- **Artifact Storage**: Lab certificate PDF files are stored on local filesystem (`backend/uploads/`); cloud object storage (S3/GCS/IPFS) is not configured in this MVP build.
+- **Cryptographic Notarization vs. Chemical Truth**: The SHA-256 digest recorded on PostgreSQL and notarized on the EVM blockchain establishes digital integrity and evidence identity for the PDF lab report file; it does **not** scientifically prove the chemical correctness of the lab tests or guarantee biological honey purity.
+- **Local EVM Demonstration Runtime**: The blockchain evidence layer is designed and validated against local Hardhat nodes (`http://127.0.0.1:8545`, Chain ID `31337`). It is not deployed to public Ethereum mainnets or government blockchains, and does not replace PostgreSQL as the operational source of truth.
+- **Risk Screening Engine**: The risk evaluation engine uses deterministic prototype threshold rules for demonstration; it does **not** constitute a clinical veterinary or biological disease diagnostic tool, nor does it possess authority over business state transitions.
+- **Artifact Storage**: Lab certificate PDF files are stored on the local filesystem (`backend/uploads/`); cloud object storage (S3/GCS/IPFS) is not configured in this MVP build.
 - **No Production Overclaiming**: This platform is an educational and hackathon demonstration prototype.
