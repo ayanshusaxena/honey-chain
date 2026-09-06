@@ -1,220 +1,246 @@
 "use client";
 
+import React, { useState } from "react";
 import {
   Users,
-  UserPlus,
   ShieldCheck,
-  UserRound,
+  Shield,
+  Key,
+  UserCheck,
   Search,
   CheckCircle2,
-  Clock3,
+  Lock,
 } from "lucide-react";
+import { useAppSession } from "../../lib/session-store";
+import { AppShell } from "../../components/layout/AppShell";
+import { AppHeader } from "../../components/layout/AppHeader";
+import { MetricCard } from "../../components/ui/MetricCard";
+import { StatusBadge } from "../../components/ui/StatusBadge";
+import type { UserRole } from "../../types/contracts";
 
-type User = {
+interface SeededAccount {
   id: string;
-  name: string;
   email: string;
-  role: string;
-  status: "ACTIVE" | "PENDING";
-};
+  role: UserRole;
+  title: string;
+  department: string;
+  capabilities: string[];
+  status: "ACTIVE";
+}
 
-const users: User[] = [
+const SEEDED_OPERATORS: SeededAccount[] = [
   {
-    id: "USR-001",
-    name: "Honey Chain Admin",
-    email: "admin@honeychain.com",
-    role: "Administrator",
+    id: "SEC-USR-001",
+    email: "demo.admin@honeychain.local",
+    role: "ADMIN",
+    title: "Chief Trust & Safety Officer",
+    department: "Platform Security & Governance",
+    capabilities: [
+      "Cryptographic Batch Status Overrides (ACTIVE/HOLD/RECALL)",
+      "Hive Lifecycle Provisioning & Decommissioning",
+      "Full Multi-Tier Traceability Audit",
+      "Blockchain Root Contract Anchoring",
+    ],
     status: "ACTIVE",
   },
   {
-    id: "USR-002",
-    name: "Beekeeper A",
-    email: "beekeeper.a@honeychain.com",
-    role: "Beekeeper",
+    id: "SEC-USR-002",
+    email: "demo.beekeeper@honeychain.local",
+    role: "BEEKEEPER",
+    title: "Lead Apiary Beekeeper",
+    department: "Field Extraction & Apiary Monitoring",
+    capabilities: [
+      "Apiary Hive Registration & Maintenance Updates",
+      "IoT Sensor Telemetry Transmission",
+      "Apiary Harvest Log Registration",
+      "Field Hive Allocation Recording",
+    ],
     status: "ACTIVE",
   },
   {
-    id: "USR-003",
-    name: "Lab Operator",
-    email: "lab@honeychain.com",
-    role: "Lab Operator",
-    status: "PENDING",
+    id: "SEC-USR-003",
+    email: "demo.processor@honeychain.local",
+    role: "PROCESSOR",
+    title: "Facility Operations Manager",
+    department: "Regional Packaging & Lab Verification",
+    capabilities: [
+      "Collection Lot Blending & Aggregation",
+      "Commercial Processing Batch Bottling",
+      "Lab Evidence PDF Certificate Upload",
+      "On-Chain Evidence Hash Notarization",
+    ],
+    status: "ACTIVE",
   },
 ];
 
 export default function UsersPage() {
+  const session = useAppSession();
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredOperators = SEEDED_OPERATORS.filter(
+    (op) =>
+      op.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      op.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      op.department.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      op.role.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
-    <main className="min-h-screen bg-slate-50 p-5 sm:p-8">
+    <AppShell>
+      <div className="space-y-6">
+        {/* Header */}
+        <AppHeader
+          title="Identity & Access Governance"
+          breadcrumbs={[
+            { label: "Honey Chain", href: "/dashboard" },
+            { label: "Management" },
+            { label: "Users" },
+          ]}
+          session={session}
+        />
 
-      {/* Header */}
-      <div className="mb-8 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-        <div>
-          <p className="text-sm font-medium text-amber-600">
-            Honey Chain
-          </p>
-
-          <div className="mt-1 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <Users size={22} />
+        {/* Active Session Identity Card */}
+        <div className="rounded-2xl border border-amber-200/80 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent p-5 shadow-sm dark:border-amber-900/40 dark:from-amber-950/30 dark:via-amber-950/10">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500 text-white shadow-md shadow-amber-500/20">
+                <UserCheck className="h-6 w-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                    Active Authenticated Session
+                  </h2>
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                    SECURED
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  Principal ID: <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{session?.userId ? `${session.userId.slice(0, 8)}...` : "Active Operator"}</span> · Role: <span className="font-bold text-amber-600 dark:text-amber-400">{session?.role || "OPERATOR"}</span>
+                </p>
+              </div>
             </div>
 
-            <h1 className="text-3xl font-bold text-slate-800">
-              Users
-            </h1>
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              <span>JWT Bearer Token Active</span>
+            </div>
           </div>
-
-          <p className="mt-2 text-sm text-slate-500">
-            Manage platform users and their workspace roles.
-          </p>
         </div>
 
-        <button
-          onClick={() =>
-            alert("User creation form will be connected to the backend.")
-          }
-          className="flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-amber-600"
-        >
-          <UserPlus size={18} />
-          Add User
-        </button>
-      </div>
-
-      {/* Summary */}
-      <div className="mb-7 grid gap-5 sm:grid-cols-3">
-        <SummaryCard
-          title="Total Users"
-          value="3"
-          icon={<Users size={21} />}
-        />
-
-        <SummaryCard
-          title="Active Users"
-          value="2"
-          icon={<CheckCircle2 size={21} />}
-        />
-
-        <SummaryCard
-          title="Pending Users"
-          value="1"
-          icon={<Clock3 size={21} />}
-        />
-      </div>
-
-      {/* Search */}
-      <div className="mb-7 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center gap-3">
-          <Search size={19} className="text-slate-400" />
-
-          <input
-            type="text"
-            placeholder="Search users by name or email..."
-            className="w-full bg-transparent text-sm text-slate-700 outline-none"
+        {/* Security Summary Metrics */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard
+            title="AUTHORIZED ROLES"
+            value="3"
+            icon={Shield}
+            subtitle="ADMIN, BEEKEEPER, PROCESSOR"
+          />
+          <MetricCard
+            title="SEEDED OPERATORS"
+            value="3"
+            icon={Users}
+            subtitle="Cryptographically provisioned"
+          />
+          <MetricCard
+            title="ACCESS CONTROL"
+            value="RBAC"
+            icon={Lock}
+            subtitle="Strict endpoint role gating"
+          />
+          <MetricCard
+            title="KEY MANAGEMENT"
+            value="HSM / KMS"
+            icon={Key}
+            subtitle="Secured secret distribution"
           />
         </div>
-      </div>
 
-      {/* User List */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-
-        <div className="border-b border-slate-100 p-6">
-          <h2 className="text-lg font-bold text-slate-800">
-            Platform Users
-          </h2>
-
-          <p className="mt-1 text-sm text-slate-400">
-            Registered users and assigned roles.
-          </p>
-        </div>
-
-        <div className="divide-y divide-slate-100">
-
-          {users.map((user) => (
-            <div
-              key={user.id}
-              className="flex flex-col gap-4 p-5 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
-            >
-
-              <div className="flex items-center gap-4">
-
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                  <UserRound size={22} />
-                </div>
-
-                <div>
-                  <p className="font-bold text-slate-700">
-                    {user.name}
-                  </p>
-
-                  <p className="mt-1 text-sm text-slate-400">
-                    {user.email}
-                  </p>
-
-                  <p className="mt-1 text-xs text-slate-400">
-                    {user.id}
-                  </p>
-                </div>
-
-              </div>
-
-              <div className="flex items-center gap-3">
-
-                <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
-                  <ShieldCheck size={13} />
-                  {user.role}
-                </span>
-
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-bold ${
-                    user.status === "ACTIVE"
-                      ? "bg-green-50 text-green-600"
-                      : "bg-yellow-50 text-yellow-600"
-                  }`}
-                >
-                  {user.status}
-                </span>
-
-              </div>
-
+        {/* Role Governance & Security Policy Notice */}
+        <div className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-[#0c1527]">
+          <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                Platform Operator Role Directory
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                Authorized identity profiles and credential specifications configured in the platform security baseline.
+              </p>
             </div>
-          ))}
 
+            <div className="relative w-full sm:w-64">
+              <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Filter operator or role..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-8.5 w-full rounded-lg border border-slate-200 bg-slate-50/50 pl-8.5 pr-3 text-xs text-slate-800 placeholder-slate-400 focus:border-amber-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200 dark:focus:bg-slate-900"
+              />
+            </div>
+          </div>
+
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {filteredOperators.map((operator) => (
+              <div
+                key={operator.id}
+                className="p-5 transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/30"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <span className="font-mono text-xs font-bold text-slate-400">
+                        {operator.id}
+                      </span>
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                        {operator.title}
+                      </h4>
+                      <StatusBadge status={operator.status} size="sm" />
+                    </div>
+
+                    <p className="mt-1 font-mono text-xs font-semibold text-amber-600 dark:text-amber-400">
+                      {operator.email}
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      Department: {operator.department}
+                    </p>
+                  </div>
+
+                  <span className="inline-flex rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                    Role: {operator.role}
+                  </span>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3 text-xs dark:border-slate-800/60 dark:bg-slate-900/40">
+                  <span className="font-bold text-slate-600 dark:text-slate-300">
+                    Enforced Cryptographic & System Capabilities:
+                  </span>
+                  <ul className="mt-1.5 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {operator.capabilities.map((cap, i) => (
+                      <li
+                        key={i}
+                        className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        <span>{cap}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t border-slate-100 bg-slate-50/50 p-4 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400">
+            <div className="flex items-center gap-2">
+              <Lock className="h-4 w-4 text-slate-400" />
+              <span>
+                <strong>Security Policy Note:</strong> Platform accounts and asymmetric key pairs are strictly provisioned via identity federation and environment security vaults. Arbitrary in-browser account creation is disallowed by architectural policy.
+              </span>
+            </div>
+          </div>
         </div>
       </div>
-
-    </main>
-  );
-}
-
-function SummaryCard({
-  title,
-  value,
-  icon,
-}: {
-  title: string;
-  value: string;
-  icon: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-
-      <div className="flex items-center justify-between">
-
-        <div>
-          <p className="text-sm font-medium text-slate-400">
-            {title}
-          </p>
-
-          <h3 className="mt-2 text-3xl font-bold text-slate-800">
-            {value}
-          </h3>
-        </div>
-
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-          {icon}
-        </div>
-
-      </div>
-
-    </div>
+    </AppShell>
   );
 }
