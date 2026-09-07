@@ -12,6 +12,13 @@
 
 import { getApiBaseUrl } from "./config";
 import { ApiError, ApiErrorDetail } from "./errors";
+import type {
+  PackagingLotCreate,
+  PackagingLotResponse,
+  QrTokenCreateResponse,
+  QrTokenMetadataResponse,
+  ConsumerVerificationResponse,
+} from "../types/contracts";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
@@ -230,6 +237,34 @@ class ApiClient {
    */
   upload<T>(path: string, formData: FormData, options?: RequestOptions): Promise<T> {
     return this.request<T>("POST", path, formData, options, null);
+  }
+
+  // ==========================================================================
+  // Packaging & QR Domain Helpers
+  // ==========================================================================
+
+  getBatchPackagingLots(batchId: string): Promise<PackagingLotResponse[]> {
+    return this.get<PackagingLotResponse[]>(`/batches/${batchId}/packaging`);
+  }
+
+  createPackagingLot(batchId: string, body: PackagingLotCreate): Promise<PackagingLotResponse> {
+    return this.post<PackagingLotResponse>(`/batches/${batchId}/packaging`, body);
+  }
+
+  createQrToken(packagingLotId: string): Promise<QrTokenCreateResponse> {
+    return this.post<QrTokenCreateResponse>(`/packaging/${packagingLotId}/qr`);
+  }
+
+  getQrTokenMetadata(packagingLotId: string): Promise<QrTokenMetadataResponse> {
+    return this.get<QrTokenMetadataResponse>(`/packaging/${packagingLotId}/qr`);
+  }
+
+  revokeQrToken(qrId: string): Promise<QrTokenMetadataResponse> {
+    return this.post<QrTokenMetadataResponse>(`/qr/${qrId}/revoke`);
+  }
+
+  verifyConsumerToken(rawToken: string): Promise<ConsumerVerificationResponse> {
+    return this.get<ConsumerVerificationResponse>(`/verify/${rawToken}`, { skipAuth: true });
   }
 }
 

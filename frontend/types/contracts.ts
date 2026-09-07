@@ -329,3 +329,111 @@ export interface BlockchainRecordResponse {
   block_number: number | null;
   recorded_at: string; // ISO datetime
 }
+
+// ============================================================================
+// 10. Packaging Lots Domain
+// ============================================================================
+
+export interface PackagingLotCreate {
+  package_lot_code: string;
+  quantity: number;
+  unit: PackagingUnit;
+  package_size_grams: number;
+  batch_id?: string | null; // UUID
+}
+
+export interface PackagingLotResponse {
+  id: string; // UUID
+  package_lot_code: string;
+  batch_id: string; // UUID
+  quantity: number;
+  unit: PackagingUnit;
+  package_size_grams: number;
+  packaged_quantity_kg: number;
+  created_at: string; // ISO datetime
+}
+
+export interface PackagingLotDetailResponse extends PackagingLotResponse {
+  batch?: {
+    id: string;
+    batch_code: string;
+    processor_id: string;
+    status: BatchStatus;
+    is_finalized: boolean;
+    finalized_at: string | null;
+    derived_quantity_kg: number | null;
+    created_at: string;
+    updated_at: string;
+  } | null;
+}
+
+// ============================================================================
+// 11. QR Domain & Consumer Verification
+// ============================================================================
+
+export interface QrTokenCreateResponse {
+  id: string; // UUID
+  packaging_lot_id: string; // UUID
+  status: QrStatus;
+  verification_url: string; // Single-use exposed full verification URL
+  created_at: string; // ISO datetime
+}
+
+export interface QrTokenMetadataResponse {
+  id: string; // UUID
+  packaging_lot_id: string; // UUID
+  status: QrStatus;
+  created_at: string; // ISO datetime
+}
+
+export interface ConsumerBatchInfo {
+  batch_code: string;
+  status: BatchStatus;
+  is_finalized: boolean;
+  finalized_at: string | null;
+  created_at: string;
+}
+
+export interface ConsumerPackagingInfo {
+  package_lot_code: string;
+  quantity: number;
+  unit: PackagingUnit;
+  package_size_grams: number;
+  packaged_quantity_kg: number;
+  created_at: string;
+}
+
+export interface ConsumerProvenanceHarvest {
+  harvest_code: string;
+  harvest_date: string;
+  regions: string[];
+}
+
+export interface ConsumerLabEvidence {
+  certificate_id: string;
+  test_summary: string;
+  file_name: string;
+  file_hash_sha256: string;
+  status: LabEvidenceStatus;
+  uploaded_at: string;
+}
+
+export interface ConsumerBlockchainRecord {
+  event_type: string;
+  transaction_hash: string | null;
+  status: BlockchainStatus;
+  network: string;
+  contract_address: string | null;
+  block_number: number | null;
+  recorded_at: string;
+}
+
+export interface ConsumerVerificationResponse {
+  verification_status: "VERIFIED" | "HOLD" | "RECALLED";
+  batch: ConsumerBatchInfo;
+  packaging_lot: ConsumerPackagingInfo;
+  provenance: ConsumerProvenanceHarvest[];
+  lab_evidence: ConsumerLabEvidence[];
+  blockchain_records: ConsumerBlockchainRecord[];
+  warning: string | null;
+}
