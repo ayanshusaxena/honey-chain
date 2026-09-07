@@ -107,7 +107,6 @@ def evaluate_api():
         }), 500
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5050, debug=True)
-    host = os.getenv("HOST", "127.0.0.1")
+    host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "5050"))
     app.run(host=host, port=port)

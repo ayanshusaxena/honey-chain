@@ -139,7 +139,7 @@ export default function ConsumerVerificationPage() {
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div className="w-12 h-12 rounded-full border-4 border-amber-500/20 border-t-amber-500 animate-spin mb-4" />
             <h2 className="text-lg font-semibold text-[var(--color-honey-text)]">
-              Verifying Authenticity...
+              Verifying Record...
             </h2>
             <p className="text-sm text-[var(--color-honey-text-muted)] mt-1 max-w-sm">
               Querying cryptographic provenance certificates and blockchain verification records.
@@ -175,11 +175,8 @@ export default function ConsumerVerificationPage() {
               Verification Record Not Found
             </h1>
             <p className="mt-3 text-sm text-[var(--color-honey-text-muted)] max-w-md mx-auto">
-              The verification token provided is unrecognized, invalid, or belongs to a batch that has not yet completed final certification.
+              The verification token provided is unrecognized, invalid, or expired.
             </p>
-            <div className="mt-6 p-4 rounded-xl bg-[var(--color-honey-bg)] border border-[var(--color-honey-border)] text-xs text-[var(--color-honey-text-muted)] text-left font-mono break-all">
-              Token Ref: {rawToken.slice(0, 16)}...{rawToken.slice(-16)}
-            </div>
           </div>
         )}
 
@@ -214,13 +211,13 @@ export default function ConsumerVerificationPage() {
                   </div>
                   <div className="space-y-1">
                     <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
-                      Verified Authentic
+                      Verification Successful
                     </div>
                     <h1 className="text-2xl sm:text-3xl font-extrabold text-[var(--color-honey-text)] tracking-tight">
-                      Authentic Honey Certified
+                      Product Traceability Verified
                     </h1>
                     <p className="text-sm text-[var(--color-honey-text-muted)] max-w-2xl">
-                      This product has passed end-to-end cryptographic verification, certified apiary harvests, accredited laboratory purity tests, and immutable on-chain recordation.
+                      Recorded batch information has passed end-to-end cryptographic verification, documented apiary harvests, laboratory test records, and immutable on-chain recordation.
                     </p>
                   </div>
                 </div>
@@ -338,7 +335,7 @@ export default function ConsumerVerificationPage() {
                     <div>
                       <div className="text-xs text-[var(--color-honey-text-muted)]">Finalization</div>
                       <div className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
-                        <Check className="w-3.5 h-3.5" /> Certified Final
+                        <Check className="w-3.5 h-3.5" /> Finalized
                       </div>
                     </div>
                     <div>
@@ -414,13 +411,13 @@ export default function ConsumerVerificationPage() {
                   <span>Accredited Laboratory Evidence</span>
                 </div>
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[var(--color-honey-border)]/40 text-[var(--color-honey-text-muted)]">
-                  {data.lab_evidence.length} Certificate{data.lab_evidence.length === 1 ? "" : "s"}
+                  {data.lab_evidence.length} Report{data.lab_evidence.length === 1 ? "" : "s"}
                 </span>
               </div>
 
               {data.lab_evidence.length === 0 ? (
                 <p className="text-xs text-[var(--color-honey-text-muted)]">
-                  No public laboratory certificates registered for this batch.
+                  No public laboratory reports registered for this batch.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -458,7 +455,7 @@ export default function ConsumerVerificationPage() {
                       </div>
                       <div className="text-xs text-[var(--color-honey-text-muted)] sm:text-right shrink-0">
                         <div>File: {lab.file_name}</div>
-                        <div>Certified: {formatDate(lab.uploaded_at)}</div>
+                        <div>Uploaded: {formatDate(lab.uploaded_at)}</div>
                       </div>
                     </div>
                   ))}
