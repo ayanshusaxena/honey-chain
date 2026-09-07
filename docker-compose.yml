@@ -1,0 +1,110 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: honey-chain-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: honey_chain_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-honey_chain_secret}
+      POSTGRES_DB: honey_chain
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honey_chain_app -d honey_chain"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - honey-chain-net
+
+  ai-service:
+    build:
+      context: ./simulator/honey-chain-ai-iot
+      dockerfile: Dockerfile
+    container_name: honey-chain-ai-service
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      HOST: "0.0.0.0"
+      PORT: "5050"
+    ports:
+      - "5050:5050"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - honey-chain-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: honey-chain-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+    environment:
+      HONEY_CHAIN_APP_NAME: Honey Chain API
+      HONEY_CHAIN_ENVIRONMENT: development
+      HONEY_CHAIN_DATABASE_URL: postgresql+psycopg://honey_chain_app:${POSTGRES_PASSWORD:-honey_chain_secret}@postgres:5432/honey_chain
+      HONEY_CHAIN_JWT_SECRET: ${HONEY_CHAIN_JWT_SECRET:-dev_jwt_secret_must_be_at_least_32_characters_long_for_hs256}
+      HONEY_CHAIN_JWT_ALGORITHM: HS256
+      HONEY_CHAIN_ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      HONEY_CHAIN_DEMO_PASSWORD: ${HONEY_CHAIN_DEMO_PASSWORD:-cL8HERnhzmffQwza49BbIQ}
+      HONEY_CHAIN_PUBLIC_ORIGIN: ${HONEY_CHAIN_PUBLIC_ORIGIN:-http://localhost:3000}
+      HONEY_CHAIN_AI_URL: http://ai-service:5050
+      AUTO_SEED_DEMO_USERS: ${AUTO_SEED_DEMO_USERS:-true}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - honey-chain-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BACKEND_API_URL: http://backend:8000
+    container_name: honey-chain-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      BACKEND_API_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - honey-chain-net
+
+volumes:
+  postgres_data:
+    name: honey_chain_postgres_data
+
+networks:
+  honey-chain-net:
+    name: honey-chain-net
+    driver: bridge

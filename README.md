@@ -54,19 +54,96 @@ Honey Chain separates operational business workflows from cryptographic proof no
 
 ---
 
-## 2. Technology Stack & Prerequisites
+## 2. Reproducible Docker Setup (Recommended for All Teammates)
 
-| Layer | Technology | Minimum Version |
+The entire Honey Chain multi-tier architecture can be launched reproducibly with a single command using Docker Desktop.
+
+### A. Prerequisites
+- **Docker Desktop** (version 24.0+ with Docker Compose v2.20+)
+- **Git**
+
+### B. Setup & Startup
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/ayanshusaxena/honey-chain.git
+   cd honey-chain
+   ```
+
+2. **Configure environment variables**:
+   ```bash
+   cp .env.example .env
+   ```
+   *(Review `.env`. If your host already runs a local PostgreSQL service on port 5432, `POSTGRES_PORT=5433` is configured by default to avoid port collisions).*
+
+3. **Build and launch the complete stack**:
+   ```bash
+   docker compose up --build -d
+   ```
+
+4. **Verify container health**:
+   ```bash
+   docker compose ps
+   ```
+   All 4 services will transition to `(healthy)`:
+   - `honey-chain-postgres`: Database on internal port 5432 (mapped to host `POSTGRES_PORT`).
+   - `honey-chain-ai-service`: Python ML anomaly service on port 5050.
+   - `honey-chain-backend`: FastAPI on port 8000 (auto-migrated via Alembic).
+   - `honey-chain-frontend`: Next.js 16 on port 3000.
+
+### C. Automated Migration & Initialization Behavior
+- **Isolated Local Database**: Each teammate receives their own persistent named Docker volume (`honey_chain_postgres_data`). Data persists across container restarts.
+- **Deterministic Alembic Migrations**: On startup, the backend container automatically applies all pending migrations (`alembic upgrade head`) before opening the API port. No manual migration step is required.
+- **Default Login Accounts**: Default demo authentication users are automatically provisioned idempotently:
+  - **Admin**: `demo.admin@honeychain.local` / `cL8HERnhzmffQwza49BbIQ`
+  - **Beekeeper**: `demo.beekeeper@honeychain.local` / `cL8HERnhzmffQwza49BbIQ`
+  - **Processor**: `demo.processor@honeychain.local` / `cL8HERnhzmffQwza49BbIQ`
+
+### D. Application Access Points
+| Service | URL | Description |
 | :--- | :--- | :--- |
-| **Backend Runtime** | Python (FastAPI, SQLAlchemy 2.0, Pydantic v2, Web3.py) | Python 3.11+ |
-| **Database** | PostgreSQL with `psycopg` (v3) driver | PostgreSQL 14+ |
-| **Migrations** | Alembic | Latest |
-| **Smart Contract** | Solidity 0.8.24 (OpenZeppelin Contracts v5) | Solc 0.8.24 |
-| **Local EVM Node** | Hardhat (TypeScript) | Node.js 18+, npm 9+ |
+| **Frontend Web App** | [http://localhost:3000](http://localhost:3000) | Authenticated dashboard & public `/verify/[raw_token]` |
+| **Backend Swagger UI** | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive OpenAPI documentation |
+| **Backend Health Check**| [http://localhost:8000/health](http://localhost:8000/health) | FastAPI health probe (`status: ok`) |
+| **AI Service Readiness**| [http://localhost:5050/readiness](http://localhost:5050/readiness) | ML Isolation Forest model status |
+| **PostgreSQL Database** | `localhost:5433` (or `5432`) | Direct DB access (`honey_chain_app` / `honey_chain`) |
+
+### E. Common Docker Operational Commands
+- **Seed Complete Demo Journey** (Hives, Harvests, Batch, Lab PDF, Packaging, QR):
+  ```bash
+  docker compose exec backend python -m app.demo.bootstrap
+  ```
+- **Safely Reset Demo Records** (Deletes `DEMO-*` records only without touching operational data):
+  ```bash
+  docker compose exec backend python -m app.demo.bootstrap --reset-only
+  ```
+- **Stream Service Logs**:
+  ```bash
+  docker compose logs -f backend
+  docker compose logs -f frontend
+  ```
+- **Stop Containers** (Preserving database volume):
+  ```bash
+  docker compose down
+  ```
+- **Full Teardown & Reset** (Wipes database volume for a clean start):
+  ```bash
+  docker compose down -v
+  ```
 
 ---
 
-## 3. Local Environment Setup
+## 3. Technology Stack & Architecture Reference
+
+| Layer | Technology | Container Name | Host Port |
+| :--- | :--- | :--- | :--- |
+| **Frontend UI** | Next.js 16, React 19, TailwindCSS v4 | `honey-chain-frontend` | `3000` |
+| **Backend API** | FastAPI, SQLAlchemy 2.0, Alembic, Web3.py | `honey-chain-backend` | `8000` |
+| **AI Microservice** | Flask, scikit-learn, Isolation Forest | `honey-chain-ai-service` | `5050` |
+| **Database** | PostgreSQL 16 Alpine | `honey-chain-postgres` | `5433` (or `5432`) |
+
+---
+
+## 4. Manual / Non-Docker Local Setup (Alternative)
 
 ### A. Clone Repository
 ```powershell
